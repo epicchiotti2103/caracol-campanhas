@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, AlertCircle, Pencil } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, Pencil, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
+import { CampanhaForm } from "@/components/campanha-form";
 import { apiFetch } from "@/lib/api";
-import type { Campanha } from "@/types";
+import type { Campanha, CampanhaPO, Moeda } from "@/types";
 
 export default function CampanhaDetailPage() {
   return (
@@ -24,6 +25,7 @@ function CampanhaDetail() {
   const [campanha, setCampanha] = useState<Campanha | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -70,52 +72,197 @@ function CampanhaDetail() {
         <>
           <div className="mb-6 flex items-start justify-between gap-4">
             <div className="min-w-0">
+              {campanha.codigo && (
+                <p className="mb-1 inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
+                  {campanha.codigo}
+                </p>
+              )}
               <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">
                 Campanha
               </h4>
               <h1 className="truncate text-2xl font-semibold text-foreground">
                 {campanha.name}
               </h1>
-              {campanha.slug && (
-                <p className="mt-1 text-xs text-muted">/{campanha.slug}</p>
-              )}
             </div>
             <button
               type="button"
-              disabled
-              title="Edicao chega na fase 2"
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-muted opacity-60"
+              onClick={() => setEditing((v) => !v)}
+              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
             >
-              <Pencil className="h-4 w-4" />
-              Editar
+              {editing ? (
+                <>
+                  <X className="h-4 w-4" />
+                  Cancelar
+                </>
+              ) : (
+                <>
+                  <Pencil className="h-4 w-4" />
+                  Editar
+                </>
+              )}
             </button>
           </div>
 
-          <div className="space-y-4 rounded-xl border border-border bg-surface p-6">
-            <Field label="Status">
-              <StatusBadge status={campanha.status} />
-            </Field>
-            <Field label="Owner">
-              <p className="text-sm text-foreground">
-                {campanha.owner_name || campanha.owner_id}
-              </p>
-            </Field>
-            <Field label="Criada em">
-              <p className="text-sm text-foreground">
-                {fmtDateTime(campanha.created_at)}
-              </p>
-            </Field>
-            {campanha.updated_at && (
-              <Field label="Atualizada em">
-                <p className="text-sm text-foreground">
-                  {fmtDateTime(campanha.updated_at)}
-                </p>
-              </Field>
-            )}
-          </div>
+          {editing ? (
+            <CampanhaForm initial={campanha} campanhaId={campanha.id} />
+          ) : (
+            <CampanhaView campanha={campanha} />
+          )}
         </>
       )}
     </div>
+  );
+}
+
+function CampanhaView({ campanha }: { campanha: Campanha }) {
+  return (
+    <div className="space-y-6">
+      <Section title="Identificacao">
+        <Field label="Codigo">
+          <p className="font-mono text-sm text-foreground">
+            {campanha.codigo || "—"}
+          </p>
+        </Field>
+        <Field label="Nome">
+          <p className="text-sm text-foreground">{campanha.name}</p>
+        </Field>
+        <Field label="Status">
+          <StatusBadge status={campanha.status} />
+        </Field>
+      </Section>
+
+      <Section title="Periodo">
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Inicio">
+            <p className="text-sm text-foreground">{fmtDate(campanha.inicio)}</p>
+          </Field>
+          <Field label="Fim">
+            <p className="text-sm text-foreground">{fmtDate(campanha.fim)}</p>
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="App e parceiro">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="App">
+            <p className="text-sm text-foreground">{campanha.app || "—"}</p>
+          </Field>
+          <Field label="af_prt">
+            <p className="text-sm text-foreground">{campanha.af_prt || "—"}</p>
+          </Field>
+          <Field label="Plataforma">
+            <p className="text-sm text-foreground">
+              {campanha.plataforma || "—"}
+            </p>
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="Financeiro">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="Budget">
+            <p className="text-sm text-foreground">
+              {fmtBudget(campanha.budget, campanha.moeda)}
+            </p>
+          </Field>
+          <Field label="Moeda">
+            <p className="text-sm text-foreground">
+              {moedaLabel(campanha.moeda)}
+            </p>
+          </Field>
+          <Field label="Fluxo">
+            <p className="text-sm text-foreground">{campanha.fluxo || "—"}</p>
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="Eventos pagos">
+        {campanha.eventos_pagos && campanha.eventos_pagos.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {campanha.eventos_pagos.map((ev, i) => (
+              <span
+                key={`${ev}-${i}`}
+                className="inline-flex items-center rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground"
+              >
+                {ev}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted">—</p>
+        )}
+      </Section>
+
+      <Section title="POs">
+        {campanha.pos && campanha.pos.length > 0 ? (
+          <ul className="space-y-1.5">
+            {campanha.pos.map((p, i) => (
+              <li
+                key={`${p.numero}-${i}`}
+                className="flex items-center gap-2 text-sm"
+              >
+                <span className="font-mono text-foreground">{p.numero}</span>
+                <span className="rounded bg-background px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                  {moedaShort(p.moeda)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted">—</p>
+        )}
+      </Section>
+
+      <Section title="Criativo e observacoes">
+        <Field label="Criativo">
+          <p className="whitespace-pre-wrap text-sm text-foreground">
+            {campanha.criativo || "—"}
+          </p>
+        </Field>
+        <Field label="Observacoes">
+          <p className="whitespace-pre-wrap text-sm text-foreground">
+            {campanha.obs || "—"}
+          </p>
+        </Field>
+      </Section>
+
+      <Section title="Metadados">
+        <Field label="Owner">
+          <p className="text-sm text-foreground">
+            {campanha.owner_name || campanha.owner_id}
+          </p>
+        </Field>
+        <Field label="Criada em">
+          <p className="text-sm text-foreground">
+            {fmtDateTime(campanha.created_at)}
+          </p>
+        </Field>
+        {campanha.updated_at && (
+          <Field label="Atualizada em">
+            <p className="text-sm text-foreground">
+              {fmtDateTime(campanha.updated_at)}
+            </p>
+          </Field>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  children
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3 rounded-xl border border-border bg-surface p-6">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-primary">
+        {title}
+      </h2>
+      <div className="space-y-3">{children}</div>
+    </section>
   );
 }
 
@@ -127,13 +274,22 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-3 items-start gap-3">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted">
+    <div>
+      <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted">
         {label}
       </p>
-      <div className="col-span-2">{children}</div>
+      {children}
     </div>
   );
+}
+
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return "—";
+  // Aceita "YYYY-MM-DD"
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
 
 function fmtDateTime(s: string | null | undefined): string {
@@ -141,4 +297,31 @@ function fmtDateTime(s: string | null | undefined): string {
   const d = new Date(s);
   if (isNaN(d.getTime())) return "—";
   return d.toLocaleString("pt-BR");
+}
+
+function fmtBudget(
+  budget: number | null | undefined,
+  moeda: Moeda | string | null | undefined
+): string {
+  if (budget == null) return "—";
+  const m = moeda === "USD" ? "USD" : "BRL";
+  try {
+    return new Intl.NumberFormat(m === "USD" ? "en-US" : "pt-BR", {
+      style: "currency",
+      currency: m
+    }).format(budget);
+  } catch {
+    return `${m} ${budget}`;
+  }
+}
+
+function moedaLabel(m: Moeda | string | null | undefined): string {
+  if (m === "USD") return "USD (U$)";
+  if (m === "BRL") return "BRL (R$)";
+  return "—";
+}
+
+function moedaShort(m: Moeda | string | null | undefined): string {
+  if (m === "USD") return "U$";
+  return "R$";
 }

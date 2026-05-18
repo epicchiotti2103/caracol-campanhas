@@ -15,7 +15,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { apiFetch } from "@/lib/api";
-import type { Campanha, CampanhaStatus } from "@/types";
+import type { Campanha, CampanhaPO, CampanhaStatus, Moeda } from "@/types";
 
 const STATUS_OPTIONS: { value: CampanhaStatus | "todos"; label: string }[] = [
   { value: "todos", label: "Todos" },
@@ -76,7 +76,7 @@ function CampanhasList() {
       const matchSearch =
         !q ||
         c.name.toLowerCase().includes(q) ||
-        (c.slug || "").toLowerCase().includes(q);
+        (c.codigo || "").toLowerCase().includes(q);
       return matchStatus && matchSearch;
     });
   }, [campanhas, search, statusFilter]);
@@ -124,7 +124,7 @@ function CampanhasList() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
             <input
               type="text"
-              placeholder="Buscar por nome ou slug..."
+              placeholder="Buscar por nome ou codigo..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground outline-none focus:border-primary/50"
@@ -151,10 +151,20 @@ function CampanhasList() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                {["Nome", "Status", "Owner", "Acoes"].map((h) => (
+                {[
+                  "Codigo",
+                  "Inicio",
+                  "Fim",
+                  "Campanha",
+                  "Budget",
+                  "Eventos pagos",
+                  "POs",
+                  "Status",
+                  ""
+                ].map((h, i) => (
                   <th
-                    key={h}
-                    className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted"
+                    key={`${h}-${i}`}
+                    className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted"
                   >
                     {h}
                   </th>
@@ -164,13 +174,13 @@ function CampanhasList() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="py-16 text-center">
+                  <td colSpan={9} className="py-16 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-16 text-center">
+                  <td colSpan={9} className="py-16 text-center">
                     <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
                     <p className="text-sm text-muted">
                       {campanhas.length === 0
@@ -231,19 +241,71 @@ function CampanhaRow({
         !isLast ? "border-b border-border" : ""
       }`}
     >
-      <td className="whitespace-nowrap px-5 py-4">
-        <p className="font-medium text-foreground">{campanha.name}</p>
-        {campanha.slug && (
-          <p className="text-[11px] text-muted">/{campanha.slug}</p>
-        )}
+      <td className="whitespace-nowrap px-4 py-4">
+        <span className="font-mono text-xs font-semibold text-primary">
+          {campanha.codigo || "—"}
+        </span>
       </td>
-      <td className="whitespace-nowrap px-5 py-4">
+      <td className="whitespace-nowrap px-4 py-4 text-muted">
+        {fmtDate(campanha.inicio)}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-muted">
+        {fmtDate(campanha.fim)}
+      </td>
+      <td className="px-4 py-4">
+        <p className="font-medium text-foreground">{campanha.name}</p>
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-foreground">
+        {fmtBudget(campanha.budget, campanha.moeda)}
+      </td>
+      <td className="px-4 py-4 text-muted">
+        {summarizeEventos(campanha.eventos_pagos)}
+      </td>
+      <td className="px-4 py-4 text-muted">{summarizePos(campanha.pos)}</td>
+      <td className="whitespace-nowrap px-4 py-4">
         <StatusBadge status={campanha.status} />
       </td>
-      <td className="px-5 py-4 text-muted">{campanha.owner_name || "—"}</td>
-      <td className="px-5 py-4">
+      <td className="px-4 py-4">
         <Eye className="h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
       </td>
     </tr>
   );
+}
+
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
+}
+
+function fmtBudget(
+  budget: number | null | undefined,
+  moeda: Moeda | string | null | undefined
+): string {
+  if (budget == null) return "—";
+  const m = moeda === "USD" ? "USD" : "BRL";
+  try {
+    return new Intl.NumberFormat(m === "USD" ? "en-US" : "pt-BR", {
+      style: "currency",
+      currency: m
+    }).format(budget);
+  } catch {
+    return `${m} ${budget}`;
+  }
+}
+
+function summarizeEventos(eventos: string[] | undefined): string {
+  if (!eventos || eventos.length === 0) return "—";
+  if (eventos.length <= 2) return eventos.join(", ");
+  return `${eventos.slice(0, 2).join(", ")}, +${eventos.length - 2}`;
+}
+
+function summarizePos(pos: CampanhaPO[] | undefined): string {
+  if (!pos || pos.length === 0) return "—";
+  const fmt = (p: CampanhaPO) =>
+    `${p.numero} (${p.moeda === "USD" ? "U$" : "R$"})`;
+  if (pos.length <= 2) return pos.map(fmt).join(", ");
+  return `${pos.slice(0, 2).map(fmt).join(", ")}, +${pos.length - 2}`;
 }
