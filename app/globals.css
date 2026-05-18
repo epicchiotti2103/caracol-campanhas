@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 99%;
+  --foreground: 24 10% 8%;
+  --surface: 24 20% 96%;
+  --muted: 24 5% 42%;
+  --border: 24 13% 88%;
+  --primary: 25 95% 53%;
+  --success: 142 71% 35%;
+  --warning: 38 95% 50%;
+  --danger: 0 72% 51%;
+}
+
+.dark {
+  --background: 24 10% 4%;
+  --foreground: 28 20% 96%;
+  --surface: 24 12% 8%;
+  --muted: 25 8% 62%;
+  --border: 24 10% 17%;
+  --primary: 25 95% 53%;
+  --success: 142 71% 45%;
+  --warning: 38 92% 50%;
+  --danger: 0 84% 60%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: hsl(var(--background));
+}
+
+body {
+  margin: 0;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  font-size: 14px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.18);
+}
