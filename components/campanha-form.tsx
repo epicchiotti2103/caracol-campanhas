@@ -3,10 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertCircle, Plus, X } from "lucide-react";
+import { Loader2, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
-import type { Campanha, CampanhaPO, CampanhaStatus, Moeda } from "@/types";
+import type { Campanha, CampanhaEvento, CampanhaStatus, Moeda } from "@/types";
 
 const STATUS_OPTIONS: { value: CampanhaStatus; label: string }[] = [
   { value: "ativa", label: "Ativa" },
@@ -25,6 +25,11 @@ interface CampanhaFormProps {
   campanhaId?: string;
 }
 
+interface EventoRow {
+  nome: string;
+  payout: string; // string no form pra permitir input vazio; converte na hora de submit
+}
+
 function toDateInput(s: string | null | undefined): string {
   if (!s) return "";
   // Aceita "YYYY-MM-DD" ou ISO completo.
@@ -33,6 +38,17 @@ function toDateInput(s: string | null | undefined): string {
 
 function normalizeMoeda(m: string | null | undefined): Moeda {
   return m === "USD" ? "USD" : "BRL";
+}
+
+function moedaShort(m: Moeda): string {
+  return m === "USD" ? "$" : "R$";
+}
+
+function eventoToRow(e: CampanhaEvento): EventoRow {
+  return {
+    nome: e.nome ?? "",
+    payout: e.payout != null ? String(e.payout) : ""
+  };
 }
 
 export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
@@ -62,19 +78,11 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const [moeda, setMoeda] = useState<Moeda>(normalizeMoeda(initial?.moeda));
   const [fluxo, setFluxo] = useState(initial?.fluxo ?? "");
 
-  // Listas dinamicas — comecam com 1 linha vazia se nao tem nada
-  const [eventosPagos, setEventosPagos] = useState<string[]>(
-    initial?.eventos_pagos && initial.eventos_pagos.length > 0
-      ? [...initial.eventos_pagos]
-      : [""]
-  );
-  const [pos, setPos] = useState<CampanhaPO[]>(
-    initial?.pos && initial.pos.length > 0
-      ? initial.pos.map((p) => ({
-          numero: p.numero,
-          moeda: normalizeMoeda(p.moeda)
-        }))
-      : [{ numero: "", moeda: "BRL" }]
+  // Eventos — comeca com 1 linha vazia se nao tem nada
+  const [eventos, setEventos] = useState<EventoRow[]>(
+    initial?.eventos && initial.eventos.length > 0
+      ? initial.eventos.map(eventoToRow)
+      : [{ nome: "", payout: "" }]
   );
 
   // Criativo e observacoes
@@ -84,25 +92,15 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const updateEvento = (idx: number, value: string) => {
-    setEventosPagos((prev) => prev.map((v, i) => (i === idx ? value : v)));
+  const updateEvento = (idx: number, patch: Partial<EventoRow>) => {
+    setEventos((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
   };
-  const addEvento = () => setEventosPagos((prev) => [...prev, ""]);
+  const addEvento = () =>
+    setEventos((prev) => [...prev, { nome: "", payout: "" }]);
   const removeEvento = (idx: number) => {
-    setEventosPagos((prev) =>
-      prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
-    );
-  };
-
-  const updatePo = (idx: number, patch: Partial<CampanhaPO>) => {
-    setPos((prev) =>
-      prev.map((p, i) => (i === idx ? { ...p, ...patch } : p))
-    );
-  };
-  const addPo = () =>
-    setPos((prev) => [...prev, { numero: "", moeda: "BRL" }]);
-  const removePo = (idx: number) => {
-    setPos((prev) =>
+    setEventos((prev) =>
       prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
     );
   };
@@ -117,13 +115,24 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       return;
     }
 
-    // Limpa listas — remove entradas totalmente vazias.
-    const cleanEventos = eventosPagos
-      .map((v) => v.trim())
-      .filter((v) => v.length > 0);
-    const cleanPos = pos
-      .map((p) => ({ numero: p.numero.trim(), moeda: p.moeda }))
-      .filter((p) => p.numero.length > 0);
+    // Limpa eventos — remove linhas totalmente vazias (sem nome).
+    // Linhas com nome mas payout vazio mandam payout=null.
+    const cleanEventos: CampanhaEvento[] = [];
+    for (const row of eventos) {
+      const nomeTrim = row.nome.trim();
+      if (!nomeTrim) continue;
+      const payoutStr = row.payout.trim();
+      let payout: number | null = null;
+      if (payoutStr.length > 0) {
+        const n = Number(payoutStr.replace(",", "."));
+        if (Number.isNaN(n) || n < 0) {
+          setError(`Payout invalido em "${nomeTrim}". Use um numero >= 0.`);
+          return;
+        }
+        payout = n;
+      }
+      cleanEventos.push({ nome: nomeTrim, payout });
+    }
 
     const parsedBudget = budget.trim() ? Number(budget) : null;
     if (parsedBudget != null && Number.isNaN(parsedBudget)) {
@@ -144,8 +153,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       fluxo: fluxo.trim() || null,
       criativo: criativo.trim() || null,
       obs: obs.trim() || null,
-      eventos_pagos: cleanEventos,
-      pos: cleanPos
+      eventos: cleanEventos
     };
 
     setSubmitting(true);
@@ -297,28 +305,47 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         </div>
       </Section>
 
-      <Section title="Eventos pagos">
+      <Section title="Eventos" hint={`Payout em ${moedaShort(moeda)} (moeda da campanha)`}>
         <div className="space-y-2">
-          {eventosPagos.map((ev, idx) => (
-            <div key={idx} className="flex items-center gap-2">
+          {eventos.map((row, idx) => (
+            <div
+              key={idx}
+              className="grid grid-cols-[1fr,160px,auto] items-center gap-2"
+            >
               <input
                 type="text"
-                value={ev}
-                onChange={(e) => updateEvento(idx, e.target.value)}
-                placeholder="Ex: install, purchase, registration"
+                value={row.nome}
+                onChange={(e) => updateEvento(idx, { nome: e.target.value })}
+                placeholder="Nome do evento (ex: install, purchase)"
                 className={inputCls}
               />
-              {eventosPagos.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeEvento(idx)}
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-danger/40 hover:text-danger"
-                  title="Remover"
-                  aria-label="Remover evento"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">
+                  {moedaShort(moeda)}
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={row.payout}
+                  onChange={(e) =>
+                    updateEvento(idx, { payout: e.target.value })
+                  }
+                  placeholder="0,00"
+                  className={`${inputCls} pl-9`}
+                  aria-label="Payout"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => removeEvento(idx)}
+                disabled={eventos.length <= 1}
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
+                title="Remover"
+                aria-label="Remover evento"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             </div>
           ))}
           <button
@@ -328,55 +355,6 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
           >
             <Plus className="h-3.5 w-3.5" />
             Adicionar evento
-          </button>
-        </div>
-      </Section>
-
-      <Section title="POs">
-        <div className="space-y-2">
-          {pos.map((p, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={p.numero}
-                onChange={(e) => updatePo(idx, { numero: e.target.value })}
-                placeholder="Numero da PO (ex: PO-123)"
-                className={inputCls}
-              />
-              <select
-                value={p.moeda}
-                onChange={(e) =>
-                  updatePo(idx, { moeda: e.target.value as Moeda })
-                }
-                className="w-24 flex-shrink-0 rounded-lg border border-border bg-background px-2 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary/60"
-                aria-label="Moeda da PO"
-              >
-                {MOEDA_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.short}
-                  </option>
-                ))}
-              </select>
-              {pos.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removePo(idx)}
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-danger/40 hover:text-danger"
-                  title="Remover"
-                  aria-label="Remover PO"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addPo}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Adicionar PO
           </button>
         </div>
       </Section>
@@ -435,16 +413,21 @@ const textareaCls =
 
 function Section({
   title,
+  hint,
   children
 }: {
   title: string;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="space-y-4 rounded-xl border border-border bg-surface p-6">
-      <h2 className="text-xs font-semibold uppercase tracking-widest text-primary">
-        {title}
-      </h2>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-primary">
+          {title}
+        </h2>
+        {hint && <p className="text-xs text-muted">{hint}</p>}
+      </div>
       <div className="space-y-4">{children}</div>
     </section>
   );

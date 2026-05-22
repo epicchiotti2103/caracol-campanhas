@@ -5,9 +5,13 @@ export type CampanhaStatus = "ativa" | "pausada" | "encerrada";
 
 export type Moeda = "BRL" | "USD";
 
-export interface CampanhaPO {
-  numero: string;
-  moeda: Moeda;
+/**
+ * 1 evento da campanha = 1 nome + 1 payout numerico.
+ * A moeda do payout e a moeda da campanha (campo `moeda` em `Campanha`).
+ */
+export interface CampanhaEvento {
+  nome: string;
+  payout: number | null;
 }
 
 export interface Campanha {
@@ -35,9 +39,8 @@ export interface Campanha {
   moeda?: Moeda | string | null;
   fluxo?: string | null;
 
-  // Listas dinamicas
-  eventos_pagos?: string[];
-  pos?: CampanhaPO[];
+  // Eventos (1 evento = 1 payout). Moeda vem da campanha.
+  eventos?: CampanhaEvento[];
 
   // Criativo e observacoes
   criativo?: string | null;

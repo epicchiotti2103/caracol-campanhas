@@ -8,7 +8,8 @@ import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { CampanhaForm } from "@/components/campanha-form";
 import { apiFetch } from "@/lib/api";
-import type { Campanha, CampanhaPO, Moeda } from "@/types";
+import { formatCurrency } from "@/lib/format";
+import type { Campanha, Moeda } from "@/types";
 
 export default function CampanhaDetailPage() {
   return (
@@ -176,41 +177,11 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
         </div>
       </Section>
 
-      <Section title="Eventos pagos">
-        {campanha.eventos_pagos && campanha.eventos_pagos.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {campanha.eventos_pagos.map((ev, i) => (
-              <span
-                key={`${ev}-${i}`}
-                className="inline-flex items-center rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground"
-              >
-                {ev}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted">—</p>
-        )}
-      </Section>
-
-      <Section title="POs">
-        {campanha.pos && campanha.pos.length > 0 ? (
-          <ul className="space-y-1.5">
-            {campanha.pos.map((p, i) => (
-              <li
-                key={`${p.numero}-${i}`}
-                className="flex items-center gap-2 text-sm"
-              >
-                <span className="font-mono text-foreground">{p.numero}</span>
-                <span className="rounded bg-background px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-                  {moedaShort(p.moeda)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted">—</p>
-        )}
+      <Section title="Eventos">
+        <EventosTable
+          eventos={campanha.eventos}
+          moeda={campanha.moeda}
+        />
       </Section>
 
       <Section title="Criativo e observacoes">
@@ -303,16 +274,7 @@ function fmtBudget(
   budget: number | null | undefined,
   moeda: Moeda | string | null | undefined
 ): string {
-  if (budget == null) return "—";
-  const m = moeda === "USD" ? "USD" : "BRL";
-  try {
-    return new Intl.NumberFormat(m === "USD" ? "en-US" : "pt-BR", {
-      style: "currency",
-      currency: m
-    }).format(budget);
-  } catch {
-    return `${m} ${budget}`;
-  }
+  return formatCurrency(budget, moeda);
 }
 
 function moedaLabel(m: Moeda | string | null | undefined): string {
@@ -321,7 +283,52 @@ function moedaLabel(m: Moeda | string | null | undefined): string {
   return "—";
 }
 
-function moedaShort(m: Moeda | string | null | undefined): string {
-  if (m === "USD") return "U$";
-  return "R$";
+function EventosTable({
+  eventos,
+  moeda
+}: {
+  eventos: Campanha["eventos"];
+  moeda: Moeda | string | null | undefined;
+}) {
+  if (!eventos || eventos.length === 0) {
+    return <p className="text-sm text-muted">—</p>;
+  }
+  const total = eventos.reduce((acc, ev) => acc + (ev.payout ?? 0), 0);
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-background/40">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Evento
+            </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Payout
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {eventos.map((ev, i) => (
+            <tr
+              key={`${ev.nome}-${i}`}
+              className={i < eventos.length - 1 ? "border-b border-border" : ""}
+            >
+              <td className="px-3 py-2 text-foreground">{ev.nome}</td>
+              <td className="px-3 py-2 text-right font-mono text-foreground">
+                {formatCurrency(ev.payout, moeda)}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t border-border bg-background/40">
+            <td className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Total
+            </td>
+            <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
+              {formatCurrency(total, moeda)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
 }

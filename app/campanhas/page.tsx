@@ -15,7 +15,8 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { apiFetch } from "@/lib/api";
-import type { Campanha, CampanhaPO, CampanhaStatus, Moeda } from "@/types";
+import { formatCurrency } from "@/lib/format";
+import type { Campanha, CampanhaEvento, CampanhaStatus, Moeda } from "@/types";
 
 const STATUS_OPTIONS: { value: CampanhaStatus | "todos"; label: string }[] = [
   { value: "todos", label: "Todos" },
@@ -157,8 +158,7 @@ function CampanhasList() {
                   "Fim",
                   "Campanha",
                   "Budget",
-                  "Eventos pagos",
-                  "POs",
+                  "Eventos",
                   "Status",
                   ""
                 ].map((h, i) => (
@@ -174,13 +174,13 @@ function CampanhasList() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={8} className="py-16 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={8} className="py-16 text-center">
                     <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
                     <p className="text-sm text-muted">
                       {campanhas.length === 0
@@ -258,10 +258,12 @@ function CampanhaRow({
       <td className="whitespace-nowrap px-4 py-4 text-foreground">
         {fmtBudget(campanha.budget, campanha.moeda)}
       </td>
-      <td className="px-4 py-4 text-muted">
-        {summarizeEventos(campanha.eventos_pagos)}
+      <td
+        className="px-4 py-4 text-muted"
+        title={eventosTooltip(campanha.eventos, campanha.moeda)}
+      >
+        {summarizeEventosCount(campanha.eventos)}
       </td>
-      <td className="px-4 py-4 text-muted">{summarizePos(campanha.pos)}</td>
       <td className="whitespace-nowrap px-4 py-4">
         <StatusBadge status={campanha.status} />
       </td>
@@ -284,28 +286,21 @@ function fmtBudget(
   budget: number | null | undefined,
   moeda: Moeda | string | null | undefined
 ): string {
-  if (budget == null) return "—";
-  const m = moeda === "USD" ? "USD" : "BRL";
-  try {
-    return new Intl.NumberFormat(m === "USD" ? "en-US" : "pt-BR", {
-      style: "currency",
-      currency: m
-    }).format(budget);
-  } catch {
-    return `${m} ${budget}`;
-  }
+  return formatCurrency(budget, moeda);
 }
 
-function summarizeEventos(eventos: string[] | undefined): string {
+function summarizeEventosCount(eventos: CampanhaEvento[] | undefined): string {
   if (!eventos || eventos.length === 0) return "—";
-  if (eventos.length <= 2) return eventos.join(", ");
-  return `${eventos.slice(0, 2).join(", ")}, +${eventos.length - 2}`;
+  return `${eventos.length} ${eventos.length === 1 ? "evento" : "eventos"}`;
 }
 
-function summarizePos(pos: CampanhaPO[] | undefined): string {
-  if (!pos || pos.length === 0) return "—";
-  const fmt = (p: CampanhaPO) =>
-    `${p.numero} (${p.moeda === "USD" ? "U$" : "R$"})`;
-  if (pos.length <= 2) return pos.map(fmt).join(", ");
-  return `${pos.slice(0, 2).map(fmt).join(", ")}, +${pos.length - 2}`;
+function eventosTooltip(
+  eventos: CampanhaEvento[] | undefined,
+  moeda: Moeda | string | null | undefined
+): string {
+  if (!eventos || eventos.length === 0) return "";
+  const total = eventos.reduce((acc, ev) => acc + (ev.payout ?? 0), 0);
+  return `${formatCurrency(total, moeda)} em ${eventos.length} ${
+    eventos.length === 1 ? "evento" : "eventos"
+  }`;
 }
