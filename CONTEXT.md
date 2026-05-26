@@ -6,7 +6,7 @@
 
 App da suite Caracol pra **cadastrar e gerenciar campanhas**. Substitui (no futuro) o campo `campaign` texto livre do NF: quando pronto, NF passa a referenciar `campanhas.id` via FK. Pode evoluir pra ser fonte de verdade pra outras dimensoes (afiliados, ofertas) se fizer sentido.
 
-**Estado atual: fase 0 (scaffold)** — telas placeholder, sem backend.
+**Estado atual: producao** — CRUD funcional, integrado ao backend do Tracker, com tela de desempenho consumindo metrics do robo api_af (AppsFlyer Pull API).
 
 ## URLs e infra
 
@@ -39,19 +39,23 @@ caracol-campanhas/
     page.tsx                     Landing logada com atalhos
     login/page.tsx               Login (compartilha SSO com a suite)
     campanhas/
-      page.tsx                   Lista de campanhas (placeholder; tolera 404)
-      new/page.tsx               Form de criacao (nome obrigatorio)
-      [id]/page.tsx              Detalhe placeholder
+      page.tsx                   Lista de campanhas (tolera 404)
+      new/page.tsx               Form de criacao (so usa <CampanhaForm />)
+      [id]/page.tsx              Detalhe com toggle in-place pra editar
+      [id]/desempenho/page.tsx   Cards por plataforma + grafico de historico (api_af)
   components/
     app-shell.tsx                Layout com navbar
+    bootstrap-gate.tsx           Gate de acesso via /hub/me/apps
+    campanha-form.tsx            Form unico usado em new e edicao inline
     navbar.tsx                   Navbar com logo do Hub e nav de campanhas
     status-badge.tsx             Badge de status da campanha
   lib/
     api.ts                       fetch helper com Bearer + refresh automatico
     auth-context.tsx             Sessao + SSO (REPLICADO nos N apps)
     config.ts                    API_BASE_URL, HUB_URL
+    format.ts                    formatCurrency + mascara PT-BR (virgula decimal)
     toast-context.tsx            Toasts globais
-  types/index.ts                 Campanha, CampanhaStatus, CampanhaUser
+  types/index.ts                 Campanha, CampanhaEvento, CampanhaApp, CampanhaMediaSource, CampanhaMetrics*
   middleware.ts                  Redireciona pra /login se nao autenticado
   public/logo-caracol.png        Logo da suite
 ```
@@ -128,10 +132,12 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=(painel Supabase)
 
 ## Roadmap
 
-- [x] **Fase 0 — scaffold** (este commit): clonar estrutura do NF, telas placeholder (`/`, `/campanhas`, `/campanhas/new`, `/campanhas/[id]`), login, README + CONTEXT
-- [ ] **Fase 1 — backend** (tracker): rotas CRUD `/api/v1/campanhas/*`, migrations das tabelas `campanhas` e `campanhas_users`, adicionar slug `campanhas` em `/hub/me/apps`
-- [ ] **Fase 2 — frontend funcional**: lista com dados reais, edicao no detalhe, atribuir gestores, BootstrapGate validando acesso via `/hub/me/apps`
-- [ ] **Fase 3 — integracao com NF**: NF passa a usar dropdown de campanhas em vez de texto livre; FK `nf_invoices.campanha_id` + backfill
+- [x] **Fase 0 — scaffold**: clonar estrutura do NF, telas placeholder, login, README + CONTEXT
+- [x] **Fase 1 — backend** (tracker): rotas CRUD `/api/v1/campanhas/*`, migrations das tabelas `campanhas`, `campanhas_users`, `campanhas_eventos_pagos`
+- [x] **Fase 2 — frontend funcional**: lista, edicao inline, atribuir gestores, codigo CMP-NNN
+- [x] **Fase 3 — payout no evento** (22/05): drop `campanhas_pos`, payout vira propriedade do evento
+- [x] **Fase 4 — api_af integration** (26/05): novos campos `tipo`/`budget_mode`/`timezone`/`external_id`, tabelas `campanhas_apps`/`campanhas_media_sources`/`campanhas_metrics_daily`, eventos ganham `target_cpa`/`budget_monthly`, tela `/desempenho`
+- [ ] **Fase 5 — integracao com NF**: NF passa a usar dropdown de campanhas em vez de texto livre; FK `nf_invoices.campanha_id` + backfill
 
 ## Decisoes tomadas
 

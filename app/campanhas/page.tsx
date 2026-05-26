@@ -260,9 +260,9 @@ function CampanhaRow({
       </td>
       <td
         className="px-4 py-4 text-muted"
-        title={eventosTooltip(campanha.eventos, campanha.moeda)}
+        title={eventosTooltip(campanha.eventos_pagos, campanha.moeda)}
       >
-        {summarizeEventosCount(campanha.eventos)}
+        {summarizeEventosCount(campanha.eventos_pagos)}
       </td>
       <td className="whitespace-nowrap px-4 py-4">
         <StatusBadge status={campanha.status} />

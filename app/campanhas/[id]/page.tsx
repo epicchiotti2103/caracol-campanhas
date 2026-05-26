@@ -3,13 +3,25 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, AlertCircle, Pencil, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  AlertCircle,
+  Pencil,
+  X,
+  LineChart
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { CampanhaForm } from "@/components/campanha-form";
 import { apiFetch } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
-import type { Campanha, Moeda } from "@/types";
+import type {
+  Campanha,
+  CampanhaApp,
+  CampanhaMediaSource,
+  Moeda
+} from "@/types";
 
 export default function CampanhaDetailPage() {
   return (
@@ -85,23 +97,34 @@ function CampanhaDetail() {
                 {campanha.name}
               </h1>
             </div>
-            <button
-              type="button"
-              onClick={() => setEditing((v) => !v)}
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
-            >
-              {editing ? (
-                <>
-                  <X className="h-4 w-4" />
-                  Cancelar
-                </>
-              ) : (
-                <>
-                  <Pencil className="h-4 w-4" />
-                  Editar
-                </>
+            <div className="flex items-center gap-2">
+              {!editing && (
+                <Link
+                  href={`/campanhas/${campanha.id}/desempenho`}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                >
+                  <LineChart className="h-4 w-4" />
+                  Desempenho
+                </Link>
               )}
-            </button>
+              <button
+                type="button"
+                onClick={() => setEditing((v) => !v)}
+                className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+              >
+                {editing ? (
+                  <>
+                    <X className="h-4 w-4" />
+                    Cancelar
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="h-4 w-4" />
+                    Editar
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {editing ? (
@@ -130,6 +153,35 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
         <Field label="Status">
           <StatusBadge status={campanha.status} />
         </Field>
+      </Section>
+
+      <Section title="Tipo e budget">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Tipo">
+            <p className="text-sm uppercase text-foreground">
+              {campanha.tipo || "—"}
+            </p>
+          </Field>
+          <Field label="Modo de budget">
+            <p className="text-sm text-foreground">
+              {campanha.budget_mode === "per_event"
+                ? "Por evento"
+                : campanha.budget_mode === "total"
+                ? "Total unico"
+                : "—"}
+            </p>
+          </Field>
+          <Field label="Timezone">
+            <p className="text-sm text-foreground">
+              {campanha.timezone || "—"}
+            </p>
+          </Field>
+          <Field label="ID externo (api_af)">
+            <p className="font-mono text-sm text-foreground">
+              {campanha.external_id || "—"}
+            </p>
+          </Field>
+        </div>
       </Section>
 
       <Section title="Periodo">
@@ -177,9 +229,21 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
         </div>
       </Section>
 
-      <Section title="Eventos">
+      <Section title="Eventos pagos">
         <EventosTable
-          eventos={campanha.eventos}
+          eventos={campanha.eventos_pagos}
+          moeda={campanha.moeda}
+          budgetMode={campanha.budget_mode}
+        />
+      </Section>
+
+      <Section title="Apps">
+        <AppsTable apps={campanha.apps} />
+      </Section>
+
+      <Section title="Media sources">
+        <MediaSourcesTable
+          sources={campanha.media_sources}
           moeda={campanha.moeda}
         />
       </Section>
@@ -285,17 +349,23 @@ function moedaLabel(m: Moeda | string | null | undefined): string {
 
 function EventosTable({
   eventos,
-  moeda
+  moeda,
+  budgetMode
 }: {
-  eventos: Campanha["eventos"];
+  eventos: Campanha["eventos_pagos"];
   moeda: Moeda | string | null | undefined;
+  budgetMode?: Campanha["budget_mode"];
 }) {
   if (!eventos || eventos.length === 0) {
     return <p className="text-sm text-muted">—</p>;
   }
-  const total = eventos.reduce((acc, ev) => acc + (ev.payout ?? 0), 0);
+  const showBudgetMonthly = budgetMode === "per_event";
+  const totalPayout = eventos.reduce((acc, ev) => acc + (ev.payout ?? 0), 0);
+  const totalBudget = showBudgetMonthly
+    ? eventos.reduce((acc, ev) => acc + (ev.budget_monthly ?? 0), 0)
+    : null;
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-background/40">
@@ -303,8 +373,16 @@ function EventosTable({
               Evento
             </th>
             <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Target CPA
+            </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
               Payout
             </th>
+            {showBudgetMonthly && (
+              <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                Budget mensal
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -315,18 +393,142 @@ function EventosTable({
             >
               <td className="px-3 py-2 text-foreground">{ev.nome}</td>
               <td className="px-3 py-2 text-right font-mono text-foreground">
+                {formatCurrency(ev.target_cpa, moeda)}
+              </td>
+              <td className="px-3 py-2 text-right font-mono text-foreground">
                 {formatCurrency(ev.payout, moeda)}
               </td>
+              {showBudgetMonthly && (
+                <td className="px-3 py-2 text-right font-mono text-foreground">
+                  {formatCurrency(ev.budget_monthly, moeda)}
+                </td>
+              )}
             </tr>
           ))}
           <tr className="border-t border-border bg-background/40">
-            <td className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+            <td
+              className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
+              colSpan={2}
+            >
               Total
             </td>
             <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
-              {formatCurrency(total, moeda)}
+              {formatCurrency(totalPayout, moeda)}
             </td>
+            {showBudgetMonthly && (
+              <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
+                {formatCurrency(totalBudget, moeda)}
+              </td>
+            )}
           </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AppsTable({ apps }: { apps: CampanhaApp[] | undefined }) {
+  if (!apps || apps.length === 0) {
+    return <p className="text-sm text-muted">—</p>;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-background/40">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Nome
+            </th>
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              App ID
+            </th>
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Plataforma
+            </th>
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              P360
+            </th>
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Primary attr.
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {apps.map((a, i) => (
+            <tr
+              key={a.id || `${a.app_id}-${i}`}
+              className={i < apps.length - 1 ? "border-b border-border" : ""}
+            >
+              <td className="px-3 py-2 text-foreground">{a.name}</td>
+              <td className="px-3 py-2 font-mono text-xs text-foreground">
+                {a.app_id}
+              </td>
+              <td className="px-3 py-2 text-muted">{a.platform}</td>
+              <td className="px-3 py-2 text-muted">
+                {a.p360_enabled ? "sim" : "nao"}
+              </td>
+              <td className="px-3 py-2 text-muted">
+                {a.only_primary_attribution !== false ? "sim" : "nao"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MediaSourcesTable({
+  sources,
+  moeda
+}: {
+  sources: CampanhaMediaSource[] | undefined;
+  moeda: Moeda | string | null | undefined;
+}) {
+  if (!sources || sources.length === 0) {
+    return <p className="text-sm text-muted">—</p>;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-background/40">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Nome
+            </th>
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Tipo
+            </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Target CPI
+            </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Min. installs
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {sources.map((s, i) => (
+            <tr
+              key={s.id || `${s.name}-${i}`}
+              className={
+                i < sources.length - 1 ? "border-b border-border" : ""
+              }
+            >
+              <td className="px-3 py-2 text-foreground">{s.name}</td>
+              <td className="px-3 py-2 text-muted uppercase">
+                {s.campaign_type}
+              </td>
+              <td className="px-3 py-2 text-right font-mono text-foreground">
+                {s.campaign_type === "cpi"
+                  ? formatCurrency(s.target_cpi, moeda)
+                  : "—"}
+              </td>
+              <td className="px-3 py-2 text-right font-mono text-foreground">
+                {s.min_installs_to_evaluate ?? 30}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

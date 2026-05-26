@@ -6,7 +6,25 @@ import { useRouter } from "next/navigation";
 import { Loader2, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
-import type { Campanha, CampanhaEvento, CampanhaStatus, Moeda } from "@/types";
+import {
+  blurFormatNumberPtBr,
+  formatNumberPtBr,
+  moedaShort,
+  parseNumberPtBr,
+  sanitizeNumberInput
+} from "@/lib/format";
+import type {
+  AppPlatform,
+  Campanha,
+  CampanhaApp,
+  CampanhaBudgetMode,
+  CampanhaEvento,
+  CampanhaMediaSource,
+  CampanhaStatus,
+  CampanhaTipo,
+  MediaSourceCampaignType,
+  Moeda
+} from "@/types";
 
 const STATUS_OPTIONS: { value: CampanhaStatus; label: string }[] = [
   { value: "ativa", label: "Ativa" },
@@ -19,6 +37,13 @@ const MOEDA_OPTIONS: { value: Moeda; label: string; short: string }[] = [
   { value: "USD", label: "U$ (USD)", short: "U$" }
 ];
 
+const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  { value: "America/Sao_Paulo", label: "America/Sao_Paulo (BRT)" },
+  { value: "UTC", label: "UTC" },
+  { value: "America/New_York", label: "America/New_York (ET)" },
+  { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong (HKT)" }
+];
+
 interface CampanhaFormProps {
   initial?: Campanha | null;
   /** Quando passado, o form faz PATCH /campanhas/{id} em vez de POST */
@@ -27,12 +52,28 @@ interface CampanhaFormProps {
 
 interface EventoRow {
   nome: string;
-  payout: string; // string no form pra permitir input vazio; converte na hora de submit
+  payout: string;
+  target_cpa: string;
+  budget_monthly: string;
+}
+
+interface AppRow {
+  name: string;
+  app_id: string;
+  platform: AppPlatform;
+  p360_enabled: boolean;
+  only_primary_attribution: boolean;
+}
+
+interface MediaSourceRow {
+  name: string;
+  campaign_type: MediaSourceCampaignType;
+  target_cpi: string;
+  min_installs_to_evaluate: string;
 }
 
 function toDateInput(s: string | null | undefined): string {
   if (!s) return "";
-  // Aceita "YYYY-MM-DD" ou ISO completo.
   return s.length >= 10 ? s.slice(0, 10) : "";
 }
 
@@ -40,14 +81,35 @@ function normalizeMoeda(m: string | null | undefined): Moeda {
   return m === "USD" ? "USD" : "BRL";
 }
 
-function moedaShort(m: Moeda): string {
-  return m === "USD" ? "$" : "R$";
-}
-
 function eventoToRow(e: CampanhaEvento): EventoRow {
   return {
     nome: e.nome ?? "",
-    payout: e.payout != null ? String(e.payout) : ""
+    payout: e.payout != null ? formatNumberPtBr(e.payout) : "",
+    target_cpa: e.target_cpa != null ? formatNumberPtBr(e.target_cpa) : "",
+    budget_monthly:
+      e.budget_monthly != null ? formatNumberPtBr(e.budget_monthly) : ""
+  };
+}
+
+function appToRow(a: CampanhaApp): AppRow {
+  return {
+    name: a.name ?? "",
+    app_id: a.app_id ?? "",
+    platform: a.platform ?? "android",
+    p360_enabled: !!a.p360_enabled,
+    only_primary_attribution: a.only_primary_attribution !== false
+  };
+}
+
+function mediaSourceToRow(m: CampanhaMediaSource): MediaSourceRow {
+  return {
+    name: m.name ?? "",
+    campaign_type: m.campaign_type ?? "cpa",
+    target_cpi: m.target_cpi != null ? formatNumberPtBr(m.target_cpi) : "",
+    min_installs_to_evaluate:
+      m.min_installs_to_evaluate != null
+        ? String(m.min_installs_to_evaluate)
+        : "30"
   };
 }
 
@@ -73,16 +135,42 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
   // Financeiro
   const [budget, setBudget] = useState<string>(
-    initial?.budget != null ? String(initial.budget) : ""
+    initial?.budget != null ? formatNumberPtBr(initial.budget) : ""
   );
   const [moeda, setMoeda] = useState<Moeda>(normalizeMoeda(initial?.moeda));
   const [fluxo, setFluxo] = useState(initial?.fluxo ?? "");
 
-  // Eventos — comeca com 1 linha vazia se nao tem nada
+  // Tipo / budget_mode / timezone / external_id (api_af)
+  const [tipo, setTipo] = useState<CampanhaTipo>(
+    (initial?.tipo as CampanhaTipo) || "ua"
+  );
+  const [budgetMode, setBudgetMode] = useState<CampanhaBudgetMode>(
+    (initial?.budget_mode as CampanhaBudgetMode) || "total"
+  );
+  const [timezone, setTimezone] = useState<string>(
+    initial?.timezone || "America/Sao_Paulo"
+  );
+  const [externalId, setExternalId] = useState<string>(
+    initial?.external_id || ""
+  );
+
+  // Eventos pagos — comeca com 1 linha vazia se nao tem nada
   const [eventos, setEventos] = useState<EventoRow[]>(
-    initial?.eventos && initial.eventos.length > 0
-      ? initial.eventos.map(eventoToRow)
-      : [{ nome: "", payout: "" }]
+    initial?.eventos_pagos && initial.eventos_pagos.length > 0
+      ? initial.eventos_pagos.map(eventoToRow)
+      : [{ nome: "", payout: "", target_cpa: "", budget_monthly: "" }]
+  );
+
+  // Apps (api_af) — comeca vazio (nao obrigatorio)
+  const [apps, setApps] = useState<AppRow[]>(
+    initial?.apps && initial.apps.length > 0 ? initial.apps.map(appToRow) : []
+  );
+
+  // Media sources — comeca vazio
+  const [mediaSources, setMediaSources] = useState<MediaSourceRow[]>(
+    initial?.media_sources && initial.media_sources.length > 0
+      ? initial.media_sources.map(mediaSourceToRow)
+      : []
   );
 
   // Criativo e observacoes
@@ -92,18 +180,61 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  // ---- helpers eventos ----
   const updateEvento = (idx: number, patch: Partial<EventoRow>) => {
     setEventos((prev) =>
       prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
     );
   };
   const addEvento = () =>
-    setEventos((prev) => [...prev, { nome: "", payout: "" }]);
+    setEventos((prev) => [
+      ...prev,
+      { nome: "", payout: "", target_cpa: "", budget_monthly: "" }
+    ]);
   const removeEvento = (idx: number) => {
     setEventos((prev) =>
       prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
     );
   };
+
+  // ---- helpers apps ----
+  const updateApp = (idx: number, patch: Partial<AppRow>) => {
+    setApps((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  };
+  const addApp = () =>
+    setApps((prev) => [
+      ...prev,
+      {
+        name: "",
+        app_id: "",
+        platform: "android",
+        p360_enabled: false,
+        only_primary_attribution: true
+      }
+    ]);
+  const removeApp = (idx: number) =>
+    setApps((prev) => prev.filter((_, i) => i !== idx));
+
+  // ---- helpers media sources ----
+  const updateMediaSource = (idx: number, patch: Partial<MediaSourceRow>) => {
+    setMediaSources((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  };
+  const addMediaSource = () =>
+    setMediaSources((prev) => [
+      ...prev,
+      {
+        name: "",
+        campaign_type: "cpa",
+        target_cpi: "",
+        min_installs_to_evaluate: "30"
+      }
+    ]);
+  const removeMediaSource = (idx: number) =>
+    setMediaSources((prev) => prev.filter((_, i) => i !== idx));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,29 +246,120 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       return;
     }
 
-    // Limpa eventos — remove linhas totalmente vazias (sem nome).
-    // Linhas com nome mas payout vazio mandam payout=null.
+    // Parse budget
+    let parsedBudget: number | null = null;
+    if (budget.trim()) {
+      parsedBudget = parseNumberPtBr(budget);
+      if (Number.isNaN(parsedBudget) || parsedBudget < 0) {
+        setError("Budget invalido. Use um numero >= 0.");
+        return;
+      }
+    }
+
+    // Eventos
     const cleanEventos: CampanhaEvento[] = [];
     for (const row of eventos) {
       const nomeTrim = row.nome.trim();
       if (!nomeTrim) continue;
-      const payoutStr = row.payout.trim();
-      let payout: number | null = null;
-      if (payoutStr.length > 0) {
-        const n = Number(payoutStr.replace(",", "."));
+
+      const parseOpt = (
+        raw: string,
+        field: string
+      ): number | null | "ERR" => {
+        const s = raw.trim();
+        if (!s) return null;
+        const n = parseNumberPtBr(s);
         if (Number.isNaN(n) || n < 0) {
-          setError(`Payout invalido em "${nomeTrim}". Use um numero >= 0.`);
+          setError(`${field} invalido no evento "${nomeTrim}". Use um numero >= 0.`);
+          return "ERR";
+        }
+        return n;
+      };
+
+      const payout = parseOpt(row.payout, "Payout");
+      if (payout === "ERR") return;
+      const targetCpa = parseOpt(row.target_cpa, "Target CPA");
+      if (targetCpa === "ERR") return;
+
+      let budgetMonthly: number | null = null;
+      if (budgetMode === "per_event") {
+        const parsed = parseOpt(row.budget_monthly, "Budget mensal");
+        if (parsed === "ERR") return;
+        if (parsed == null) {
+          setError(
+            `Budget mensal e obrigatorio no evento "${nomeTrim}" (budget por evento).`
+          );
           return;
         }
-        payout = n;
+        budgetMonthly = parsed;
       }
-      cleanEventos.push({ nome: nomeTrim, payout });
+
+      cleanEventos.push({
+        nome: nomeTrim,
+        payout,
+        target_cpa: targetCpa,
+        budget_monthly: budgetMonthly
+      });
     }
 
-    const parsedBudget = budget.trim() ? Number(budget) : null;
-    if (parsedBudget != null && Number.isNaN(parsedBudget)) {
-      setError("Budget invalido.");
-      return;
+    // Apps
+    const cleanApps: CampanhaApp[] = [];
+    for (let i = 0; i < apps.length; i++) {
+      const row = apps[i];
+      const nameTrim = row.name.trim();
+      const appIdTrim = row.app_id.trim();
+      if (!nameTrim && !appIdTrim) continue; // skip linhas totalmente vazias
+      if (!nameTrim || !appIdTrim) {
+        setError(`App ${i + 1}: preencha nome e app_id (ou remova a linha).`);
+        return;
+      }
+      cleanApps.push({
+        name: nameTrim,
+        app_id: appIdTrim,
+        platform: row.platform,
+        p360_enabled: row.p360_enabled,
+        only_primary_attribution: row.only_primary_attribution,
+        ordem: i
+      });
+    }
+
+    // Media sources
+    const cleanMediaSources: CampanhaMediaSource[] = [];
+    for (let i = 0; i < mediaSources.length; i++) {
+      const row = mediaSources[i];
+      const nameTrim = row.name.trim();
+      if (!nameTrim) continue;
+
+      let targetCpi: number | null = null;
+      if (row.campaign_type === "cpi") {
+        if (row.target_cpi.trim()) {
+          targetCpi = parseNumberPtBr(row.target_cpi);
+          if (Number.isNaN(targetCpi) || targetCpi < 0) {
+            setError(`Media source "${nameTrim}": target_cpi invalido.`);
+            return;
+          }
+        }
+      }
+
+      let minInstalls = 30;
+      if (row.min_installs_to_evaluate.trim()) {
+        const m = Number(row.min_installs_to_evaluate);
+        if (!Number.isFinite(m) || m < 0) {
+          setError(
+            `Media source "${nameTrim}": min_installs_to_evaluate invalido.`
+          );
+          return;
+        }
+        minInstalls = Math.floor(m);
+      }
+
+      cleanMediaSources.push({
+        name: nameTrim,
+        campaign_type: row.campaign_type,
+        target_cpi: targetCpi,
+        min_installs_to_evaluate: minInstalls,
+        ordem: i
+      });
     }
 
     const payload: Record<string, any> = {
@@ -151,9 +373,15 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       budget: parsedBudget,
       moeda,
       fluxo: fluxo.trim() || null,
+      tipo,
+      budget_mode: budgetMode,
+      timezone: timezone || null,
+      external_id: externalId.trim() || null,
       criativo: criativo.trim() || null,
       obs: obs.trim() || null,
-      eventos: cleanEventos
+      eventos_pagos: cleanEventos,
+      apps: cleanApps,
+      media_sources: cleanMediaSources
     };
 
     setSubmitting(true);
@@ -178,6 +406,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       setSubmitting(false);
     }
   };
+
+  const moedaSym = moedaShort(moeda);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -212,6 +442,88 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
             ))}
           </select>
         </Field>
+      </Section>
+
+      <Section title="Tipo e budget">
+        <Field
+          label="Tipo da campanha"
+          hint="UA = User Acquisition (installs novos). RTG = Retargeting (re-engajamento)."
+        >
+          <div className="flex gap-2">
+            {(["ua", "rtg"] as CampanhaTipo[]).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setTipo(opt)}
+                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  tipo === opt
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted hover:text-foreground"
+                }`}
+              >
+                {opt.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <Field
+          label="Modo de budget"
+          hint="Total: um pote unico pro produto. Por evento: cada evento pago tem seu proprio orcamento."
+        >
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setBudgetMode("total")}
+              className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                budgetMode === "total"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted hover:text-foreground"
+              }`}
+            >
+              Budget total unico
+            </button>
+            <button
+              type="button"
+              onClick={() => setBudgetMode("per_event")}
+              className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                budgetMode === "per_event"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted hover:text-foreground"
+              }`}
+            >
+              Budget por evento
+            </button>
+          </div>
+        </Field>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Timezone">
+            <select
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className={inputCls}
+            >
+              {TIMEZONE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label="ID externo (api_af)"
+            hint="Identico ao product_name no config/apps.yaml do api_af (ex: 'Claro UA')"
+          >
+            <input
+              type="text"
+              value={externalId}
+              onChange={(e) => setExternalId(e.target.value)}
+              placeholder="Ex: Claro UA"
+              className={inputCls}
+            />
+          </Field>
+        </div>
       </Section>
 
       <Section title="Periodo">
@@ -269,15 +581,11 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
       <Section title="Financeiro">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr,140px,1fr]">
-          <Field label="Budget">
-            <input
-              type="number"
-              step="0.01"
-              min="0"
+          <Field label="Budget" hint={`em ${moedaSym}`}>
+            <PtBrCurrencyInput
               value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              placeholder="0,00"
-              className={inputCls}
+              onChange={setBudget}
+              prefix={moedaSym}
             />
           </Field>
           <Field label="Moeda">
@@ -305,12 +613,36 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         </div>
       </Section>
 
-      <Section title="Eventos" hint={`Payout em ${moedaShort(moeda)} (moeda da campanha)`}>
+      <Section
+        title="Eventos pagos"
+        hint={`Valores em ${moedaSym} (moeda da campanha)`}
+      >
         <div className="space-y-2">
+          {/* Header de colunas */}
+          <div
+            className={`hidden gap-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted sm:grid ${
+              budgetMode === "per_event"
+                ? "grid-cols-[1fr,140px,140px,140px,auto]"
+                : "grid-cols-[1fr,140px,140px,auto]"
+            }`}
+          >
+            <span>Nome</span>
+            <span title="CPA contratado (preco que voce paga por evento)">
+              Target CPA
+            </span>
+            <span title="Quanto voce repassa ao publisher">Payout</span>
+            {budgetMode === "per_event" && <span>Budget mensal</span>}
+            <span />
+          </div>
+
           {eventos.map((row, idx) => (
             <div
               key={idx}
-              className="grid grid-cols-[1fr,160px,auto] items-center gap-2"
+              className={`grid items-center gap-2 ${
+                budgetMode === "per_event"
+                  ? "grid-cols-1 sm:grid-cols-[1fr,140px,140px,140px,auto]"
+                  : "grid-cols-1 sm:grid-cols-[1fr,140px,140px,auto]"
+              }`}
             >
               <input
                 type="text"
@@ -319,23 +651,26 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 placeholder="Nome do evento (ex: install, purchase)"
                 className={inputCls}
               />
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">
-                  {moedaShort(moeda)}
-                </span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={row.payout}
-                  onChange={(e) =>
-                    updateEvento(idx, { payout: e.target.value })
-                  }
-                  placeholder="0,00"
-                  className={`${inputCls} pl-9`}
-                  aria-label="Payout"
+              <PtBrCurrencyInput
+                value={row.target_cpa}
+                onChange={(v) => updateEvento(idx, { target_cpa: v })}
+                prefix={moedaSym}
+                aria-label="Target CPA"
+              />
+              <PtBrCurrencyInput
+                value={row.payout}
+                onChange={(v) => updateEvento(idx, { payout: v })}
+                prefix={moedaSym}
+                aria-label="Payout"
+              />
+              {budgetMode === "per_event" && (
+                <PtBrCurrencyInput
+                  value={row.budget_monthly}
+                  onChange={(v) => updateEvento(idx, { budget_monthly: v })}
+                  prefix={moedaSym}
+                  aria-label="Budget mensal"
                 />
-              </div>
+              )}
               <button
                 type="button"
                 onClick={() => removeEvento(idx)}
@@ -355,6 +690,204 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
           >
             <Plus className="h-3.5 w-3.5" />
             Adicionar evento
+          </button>
+        </div>
+      </Section>
+
+      <Section
+        title="Apps"
+        hint="Apps que api_af deve trackear (Android / iOS)"
+      >
+        <div className="space-y-3">
+          {apps.length === 0 && (
+            <p className="text-xs text-muted">
+              Nenhum app cadastrado. Para que o robo api_af envie metrics,
+              cadastre ao menos 1 plataforma.
+            </p>
+          )}
+          {apps.map((row, idx) => (
+            <div
+              key={idx}
+              className="space-y-3 rounded-lg border border-border bg-background p-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  App {idx + 1}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => removeApp(idx)}
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                  title="Remover app"
+                  aria-label="Remover app"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Nome">
+                  <input
+                    type="text"
+                    value={row.name}
+                    onChange={(e) =>
+                      updateApp(idx, { name: e.target.value })
+                    }
+                    placeholder="Ex: Claro Android"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="App ID">
+                  <input
+                    type="text"
+                    value={row.app_id}
+                    onChange={(e) =>
+                      updateApp(idx, { app_id: e.target.value })
+                    }
+                    placeholder="com.claro.app ou id1234567890"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Plataforma">
+                  <select
+                    value={row.platform}
+                    onChange={(e) =>
+                      updateApp(idx, {
+                        platform: e.target.value as AppPlatform
+                      })
+                    }
+                    className={inputCls}
+                  >
+                    <option value="android">android</option>
+                    <option value="ios">ios</option>
+                  </select>
+                </Field>
+                <div className="flex flex-col gap-2 pt-6">
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={row.p360_enabled}
+                      onChange={(e) =>
+                        updateApp(idx, { p360_enabled: e.target.checked })
+                      }
+                      className="h-4 w-4 rounded border-border bg-background"
+                    />
+                    P360 habilitado
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={row.only_primary_attribution}
+                      onChange={(e) =>
+                        updateApp(idx, {
+                          only_primary_attribution: e.target.checked
+                        })
+                      }
+                      className="h-4 w-4 rounded border-border bg-background"
+                    />
+                    So atribuicao primaria
+                  </label>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addApp}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Adicionar plataforma
+          </button>
+        </div>
+      </Section>
+
+      <Section title="Media sources" hint="Origens (ex: googleadwords_int)">
+        <div className="space-y-3">
+          {mediaSources.length === 0 && (
+            <p className="text-xs text-muted">
+              Nenhuma media source cadastrada.
+            </p>
+          )}
+          {mediaSources.map((row, idx) => (
+            <div
+              key={idx}
+              className="space-y-3 rounded-lg border border-border bg-background p-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  Media source {idx + 1}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => removeMediaSource(idx)}
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                  title="Remover media source"
+                  aria-label="Remover media source"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Nome">
+                  <input
+                    type="text"
+                    value={row.name}
+                    onChange={(e) =>
+                      updateMediaSource(idx, { name: e.target.value })
+                    }
+                    placeholder="Ex: googleadwords_int"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Tipo">
+                  <select
+                    value={row.campaign_type}
+                    onChange={(e) =>
+                      updateMediaSource(idx, {
+                        campaign_type: e.target
+                          .value as MediaSourceCampaignType
+                      })
+                    }
+                    className={inputCls}
+                  >
+                    <option value="cpa">CPA</option>
+                    <option value="cpi">CPI</option>
+                  </select>
+                </Field>
+                {row.campaign_type === "cpi" && (
+                  <Field label="Target CPI" hint={`em ${moedaSym}`}>
+                    <PtBrCurrencyInput
+                      value={row.target_cpi}
+                      onChange={(v) =>
+                        updateMediaSource(idx, { target_cpi: v })
+                      }
+                      prefix={moedaSym}
+                    />
+                  </Field>
+                )}
+                <Field label="Min. installs p/ avaliar">
+                  <input
+                    type="number"
+                    min="0"
+                    value={row.min_installs_to_evaluate}
+                    onChange={(e) =>
+                      updateMediaSource(idx, {
+                        min_installs_to_evaluate: e.target.value
+                      })
+                    }
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addMediaSource}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Adicionar media source
           </button>
         </div>
       </Section>
@@ -410,6 +943,38 @@ const inputCls =
   "w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary/60";
 const textareaCls =
   "w-full resize-y rounded-lg border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary/60";
+
+// Input numerico com formatacao PT-BR e prefixo de moeda.
+// Aceita digitos/virgula/ponto enquanto digita; formata como "1.234,56" no blur.
+function PtBrCurrencyInput({
+  value,
+  onChange,
+  prefix,
+  "aria-label": ariaLabel
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  prefix: string;
+  "aria-label"?: string;
+}) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">
+        {prefix}
+      </span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        onChange={(e) => onChange(sanitizeNumberInput(e.target.value))}
+        onBlur={(e) => onChange(blurFormatNumberPtBr(e.target.value))}
+        placeholder="0,00"
+        aria-label={ariaLabel}
+        className={`${inputCls} pl-9`}
+      />
+    </div>
+  );
+}
 
 function Section({
   title,

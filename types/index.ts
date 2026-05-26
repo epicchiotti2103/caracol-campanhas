@@ -5,13 +5,47 @@ export type CampanhaStatus = "ativa" | "pausada" | "encerrada";
 
 export type Moeda = "BRL" | "USD";
 
+export type CampanhaTipo = "ua" | "rtg";
+
+export type CampanhaBudgetMode = "total" | "per_event";
+
+export type AppPlatform = "android" | "ios";
+
+export type MetricPlatform = "android" | "ios" | "consolidado";
+
+export type MediaSourceCampaignType = "cpa" | "cpi";
+
 /**
- * 1 evento da campanha = 1 nome + 1 payout numerico.
- * A moeda do payout e a moeda da campanha (campo `moeda` em `Campanha`).
+ * 1 evento da campanha = nome + payout (repasse) + target_cpa (CPA contratado)
+ * + budget_monthly (so quando budget_mode === 'per_event').
+ * A moeda dos valores e a moeda da campanha (campo `moeda` em `Campanha`).
  */
 export interface CampanhaEvento {
+  id?: string | null;
   nome: string;
-  payout: number | null;
+  payout?: number | null;
+  target_cpa?: number | null;
+  budget_monthly?: number | null;
+  ordem?: number;
+}
+
+export interface CampanhaApp {
+  id?: string | null;
+  name: string;
+  app_id: string;
+  platform: AppPlatform;
+  p360_enabled?: boolean;
+  only_primary_attribution?: boolean;
+  ordem?: number;
+}
+
+export interface CampanhaMediaSource {
+  id?: string | null;
+  name: string;
+  campaign_type: MediaSourceCampaignType;
+  target_cpi?: number | null;
+  min_installs_to_evaluate?: number;
+  ordem?: number;
 }
 
 export interface Campanha {
@@ -39,8 +73,18 @@ export interface Campanha {
   moeda?: Moeda | string | null;
   fluxo?: string | null;
 
-  // Eventos (1 evento = 1 payout). Moeda vem da campanha.
-  eventos?: CampanhaEvento[];
+  // Novos campos (api_af integration)
+  tipo?: CampanhaTipo | null;
+  budget_mode?: CampanhaBudgetMode | null;
+  timezone?: string | null;
+  external_id?: string | null;
+
+  // Eventos pagos (backend usa esse nome). Moeda vem da campanha.
+  eventos_pagos?: CampanhaEvento[];
+
+  // Apps e media sources (para integracao com api_af)
+  apps?: CampanhaApp[];
+  media_sources?: CampanhaMediaSource[];
 
   // Criativo e observacoes
   criativo?: string | null;
@@ -56,4 +100,44 @@ export interface CampanhaUser {
   user_name?: string | null;
   user_email?: string | null;
   role: CampanhaUserRole;
+}
+
+// ---- Metrics (api_af) ----
+
+export interface CampanhaMetricsRow {
+  platform: MetricPlatform;
+  spend_actual?: number | null;
+  budget_monthly?: number | null;
+  spend_pace_pct?: number | null;
+  budget_used_pct?: number | null;
+  p360_event_rate?: number | null;
+  pa_false_rate?: number | null;
+  pace_status?: string | null;
+  report_date?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+}
+
+export interface CampanhaMetricsLatest {
+  report_date: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  platforms: Partial<Record<MetricPlatform, CampanhaMetricsRow>>;
+}
+
+export interface CampanhaMetricsHistoryPoint {
+  report_date: string;
+  platform: MetricPlatform;
+  spend_actual: number | null;
+  spend_pace_pct: number | null;
+  budget_used_pct: number | null;
+  budget_monthly: number | null;
+  p360_event_rate: number | null;
+  pa_false_rate: number | null;
+  pace_status: string | null;
+}
+
+export interface CampanhaMetricsHistory {
+  days: number;
+  series: CampanhaMetricsHistoryPoint[];
 }

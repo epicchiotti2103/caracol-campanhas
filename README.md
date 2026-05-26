@@ -6,7 +6,7 @@ Faz parte da suite Caracol — entrada pelo [Hub](https://app.aeobr.com.br).
 
 ## Status: producao
 
-CRUD completo, backend integrado, layout de login unificado com o resto da suite. Modelo de eventos refatorado em 22/05/2026: cada evento tem `nome + payout` (numero), moeda fica na campanha. Ver `CONTEXT.md` pra evolucao.
+CRUD completo, backend integrado, layout de login unificado com o resto da suite. Em 26/05/2026 ganhou integracao com o robo **api_af** (AppsFlyer Pull API): novos campos `tipo`/`budget_mode`/`timezone`/`external_id` na campanha, eventos com `target_cpa`/`budget_monthly`, secoes de **Apps** e **Media sources**, alem da tela de **/desempenho** com cards por plataforma + grafico de historico. Ver `CONTEXT.md` pra evolucao.
 
 ## Stack
 
@@ -21,19 +21,24 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - `/login` — split panel (layout unificado da suite)
 - `/` — landing logada com atalhos pra lista e nova campanha
 - `/campanhas` — lista com colunas: Codigo, Inicio, Fim, Nome, Budget, Eventos (count + tooltip com soma), Status
-- `/campanhas/new` — form completo: Identificacao, Periodo, App/parceiro, Financeiro (budget + moeda BRL/USD), **Eventos (nome + payout numerico, N por campanha)**, Criativo e Observacoes
-- `/campanhas/[id]` — detalhe com toggle in-place pra editar (sem rota `/edit` separada)
+- `/campanhas/new` — form completo: Identificacao, **Tipo e budget (UA/RTG, budget_mode, timezone, external_id)**, Periodo, App/parceiro, Financeiro (budget + moeda BRL/USD com mascara PT-BR), **Eventos pagos (nome + target_cpa + payout + budget_monthly condicional)**, **Apps (N plataformas android/ios)**, **Media sources (cpa/cpi)**, Criativo e Observacoes
+- `/campanhas/[id]` — detalhe com toggle in-place pra editar (sem rota `/edit` separada); botao "Desempenho" leva pra `/campanhas/[id]/desempenho`
+- `/campanhas/[id]/desempenho` — cards por plataforma (consolidado, android, ios) com gasto/budget + pace + fraude P360 + PA False, alem de grafico de historico (7/30/90 dias) consumindo `/api/v1/campanhas/{id}/metrics/{latest,history}`
 
 ## Modelo de dados (campanha)
 
 - **Codigo CMP-NNN** gerado automaticamente por trigger no Postgres (`set_campanha_codigo`)
 - **Periodo** (inicio/fim), **app/parceiro**, **plataforma**, **fluxo**
-- **Financeiro**: budget + moeda BRL ou USD (moeda **da campanha** — todos os payouts dos eventos usam essa moeda)
-- **Eventos** (tabela filha `campanhas_eventos_pagos`): cada um com `nome + payout numeric`. Payout exibido com prefixo da moeda da campanha (`R$` / `$`). Edicao do array faz replace (PATCH manda lista nova inteira)
-- **Gestores** (tabela filha `campanhas_users`): N:N com users — pra adm_campanha "ver so as suas" no futuro
+- **Financeiro**: budget + moeda BRL ou USD (moeda **da campanha** — todos os valores monetarios dos eventos usam essa moeda)
+- **api_af**: `tipo` (`ua` | `rtg`), `budget_mode` (`total` | `per_event`), `timezone`, `external_id` (= `product_name` no `config/apps.yaml` do api_af)
+- **Eventos pagos** (tabela filha `campanhas_eventos_pagos`): `nome` + `payout` + `target_cpa` + `budget_monthly` (este so obrigatorio quando `budget_mode === 'per_event'`). Edicao do array faz replace (PATCH manda lista nova inteira)
+- **Apps** (tabela filha `campanhas_apps`): N apps `{name, app_id, platform (android|ios), p360_enabled, only_primary_attribution, ordem}`. Replace total no PATCH
+- **Media sources** (tabela filha `campanhas_media_sources`): N origens `{name, campaign_type (cpa|cpi), target_cpi?, min_installs_to_evaluate}`. Replace total no PATCH
+- **Gestores** (tabela filha `campanhas_users`): N:N com users
 - **Owner**: `campanhas.owner_id` (quem criou)
+- **Metrics** (tabela filha `campanhas_metrics_daily`, alimentada pelo api_af): row por `(campanha_id, platform, report_date)` com `spend_actual`, `budget_monthly`, `spend_pace_pct`, `budget_used_pct`, `p360_event_rate`, `pa_false_rate`, `pace_status`
 
-> Modelo antigo (ate 19/05) tinha `eventos_pagos` (so nome) + `campanhas_pos` (tabela paralela com numero + moeda). Refatorado em 22/05 — PO virou payout do evento. `campanhas_pos` foi dropada (migration 017).
+> Modelo antigo (ate 19/05) tinha `eventos_pagos` (so nome) + `campanhas_pos` (tabela paralela com numero + moeda). Refatorado em 22/05 — PO virou payout do evento. Em 26/05 evento ganhou `target_cpa` + `budget_monthly` e a campanha ganhou `tipo`/`budget_mode`/`timezone`/`external_id` + filhas `campanhas_apps` e `campanhas_media_sources`.
 
 ## URLs e infra
 
@@ -75,12 +80,14 @@ Configurar na Vercel as mesmas env vars do `.env.example`, com `NEXT_PUBLIC_API_
 Vive no Tracker — qualquer rota nova em `/api/v1/campanhas/*` e trabalho do subagente `tracker`. Repo: https://github.com/epicchiotti2103/tracker-caracol.
 
 Endpoints principais:
-- `GET /api/v1/campanhas` — lista
-- `GET /api/v1/campanhas/{id}` — detalhe (com eventos como `[{id, nome, payout, ordem}]`)
-- `POST /api/v1/campanhas` — cria; body aceita `eventos: [{nome, payout?}]` (payout opcional). Tambem aceita strings legadas (`["nome1"]`) por compatibilidade
-- `PATCH /api/v1/campanhas/{id}` — atualiza; eventos faz replace do array
+- `GET /api/v1/campanhas` — lista (cada item ja inclui `eventos_pagos`, `apps`, `media_sources`)
+- `GET /api/v1/campanhas/{id}` — detalhe completo
+- `POST /api/v1/campanhas` — cria. Body: campos da campanha + `eventos_pagos: [{nome, payout?, target_cpa?, budget_monthly?}]` + `apps: [{name, app_id, platform, p360_enabled, only_primary_attribution, ordem}]` + `media_sources: [{name, campaign_type, target_cpi?, min_installs_to_evaluate, ordem}]`
+- `PATCH /api/v1/campanhas/{id}` — atualiza; arrays (`eventos_pagos`/`apps`/`media_sources`) fazem replace total quando enviados
 - `DELETE /api/v1/campanhas/{id}` — soft delete (status `encerrada`)
-- Gestao de gestores: `POST/DELETE /api/v1/campanhas/{id}/users`
+- `GET /api/v1/campanhas/{id}/metrics/latest` — snapshot mais recente por plataforma (`android`/`ios`/`consolidado`)
+- `GET /api/v1/campanhas/{id}/metrics/history?days=N` — serie diaria (default 30, max 180). Usada pelo grafico de /desempenho
+- Gestao de gestores: `GET/PUT /api/v1/campanhas/{id}/users`
 
 ## Helpers reaproveitados
 
@@ -90,5 +97,5 @@ Copiados do NF/Tracker — quando a duplicacao virar dor real, vale extrair pra 
 - `lib/auth-context.tsx` (**nao editar** sem alinhar com o orquestrador — replicado em N apps)
 - `lib/toast-context.tsx`
 - `lib/config.ts`
-- `lib/format.ts` (`formatCurrency` usando Intl.NumberFormat)
+- `lib/format.ts` (`formatCurrency` + helpers PT-BR `formatNumberPtBr`/`parseNumberPtBr`/`blurFormatNumberPtBr`/`sanitizeNumberInput` usados nos inputs monetarios pra aceitar virgula)
 - `components/app-shell.tsx`, `components/navbar.tsx`, `components/status-badge.tsx`
