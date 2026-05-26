@@ -8,12 +8,23 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
-  Info
+  Info,
+  Plus,
+  X,
+  Trash2
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { apiFetch } from "@/lib/api";
-import { formatCurrency } from "@/lib/format";
+import { useToast } from "@/lib/toast-context";
+import {
+  blurFormatNumberPtBr,
+  formatCurrency,
+  formatMesAnoLong,
+  parseNumberPtBr,
+  sanitizeNumberInput,
+  toMonthString
+} from "@/lib/format";
 import {
   paceColor,
   pacePctColor,
@@ -23,16 +34,17 @@ import {
 } from "@/lib/pace";
 import type {
   Campanha,
-  CampanhaMetricsHistory,
-  CampanhaMetricsHistoryPoint,
   CampanhaMetricsLatest,
+  CampanhaMetricsManualPayload,
   CampanhaMetricsRow,
+  CampanhaPublisherInput,
+  CampanhaPublisherRow,
+  CampanhaPublishersResponse,
   MetricPlatform,
   Moeda
 } from "@/types";
 
 const PLATFORM_ORDER: MetricPlatform[] = ["consolidado", "android", "ios"];
-const DAYS_OPTIONS = [7, 30, 90];
 
 export default function DesempenhoPage() {
   return (
@@ -48,11 +60,13 @@ function DesempenhoView() {
 
   const [campanha, setCampanha] = useState<Campanha | null>(null);
   const [latest, setLatest] = useState<CampanhaMetricsLatest | null>(null);
-  const [history, setHistory] = useState<CampanhaMetricsHistory | null>(null);
-  const [days, setDays] = useState<number>(30);
+  const [publishers, setPublishers] = useState<CampanhaPublishersResponse | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
 
   const loadAll = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -60,14 +74,26 @@ function DesempenhoView() {
     else setLoading(true);
     setError("");
     try {
-      const [c, l, h] = await Promise.all([
+      const [c, l] = await Promise.all([
         apiFetch(`/campanhas/${id}`),
-        apiFetch(`/campanhas/${id}/metrics/latest`),
-        apiFetch(`/campanhas/${id}/metrics/history?days=${days}`)
+        apiFetch(`/campanhas/${id}/metrics/latest`)
       ]);
-      setCampanha(c as Campanha);
+      const campanhaData = c as Campanha;
+      setCampanha(campanhaData);
       setLatest(l as CampanhaMetricsLatest);
-      setHistory(h as CampanhaMetricsHistory);
+
+      // Publishers: usa o mes_referencia da campanha (nao o mes selecionado em outro lugar)
+      const mesParam = toMonthString(campanhaData.mes_referencia);
+      const pubsQuery = mesParam ? `?month=${mesParam}` : "";
+      try {
+        const p = (await apiFetch(
+          `/campanhas/${id}/metrics/publishers${pubsQuery}`
+        )) as CampanhaPublishersResponse;
+        setPublishers(p);
+      } catch {
+        // Sem publishers ainda — render empty state na tabela
+        setPublishers({ month: mesParam || null, report_date: null, rows: [] });
+      }
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar desempenho.");
     } finally {
@@ -81,23 +107,6 @@ function DesempenhoView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Re-fetch history when days change (mas mantem campanha e latest carregados)
-  useEffect(() => {
-    if (!id || !campanha) return;
-    (async () => {
-      setRefreshing(true);
-      try {
-        const h = await apiFetch(`/campanhas/${id}/metrics/history?days=${days}`);
-        setHistory(h as CampanhaMetricsHistory);
-      } catch {
-        // mantem o historico antigo se falhar
-      } finally {
-        setRefreshing(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days]);
-
   const platformsOrdered: { platform: MetricPlatform; row: CampanhaMetricsRow }[] =
     useMemo(() => {
       if (!latest?.platforms) return [];
@@ -106,7 +115,6 @@ function DesempenhoView() {
         const row = latest.platforms[p];
         if (row) list.push({ platform: p, row });
       }
-      // Pega qualquer outro nao mapeado
       Object.entries(latest.platforms).forEach(([p, row]) => {
         if (!PLATFORM_ORDER.includes(p as MetricPlatform) && row) {
           list.push({ platform: p as MetricPlatform, row });
@@ -116,6 +124,7 @@ function DesempenhoView() {
     }, [latest]);
 
   const hasData = (latest?.report_date && platformsOrdered.length > 0) || false;
+  const isAdjust = campanha?.mmp === "adjust";
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -142,11 +151,18 @@ function DesempenhoView() {
         <>
           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
-              {campanha.codigo && (
-                <p className="mb-1 inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
-                  {campanha.codigo}
-                </p>
-              )}
+              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                {campanha.codigo && (
+                  <span className="inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
+                    {campanha.codigo}
+                  </span>
+                )}
+                {campanha.mes_referencia && (
+                  <span className="inline-block rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground">
+                    {formatMesAnoLong(campanha.mes_referencia)}
+                  </span>
+                )}
+              </div>
               <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">
                 Desempenho
               </h4>
@@ -159,6 +175,11 @@ function DesempenhoView() {
                     {campanha.tipo}
                   </span>
                 )}
+                {campanha.mmp && (
+                  <span className="rounded-md border border-border bg-surface px-2 py-0.5 uppercase">
+                    {campanha.mmp}
+                  </span>
+                )}
                 <StatusBadge status={campanha.status} />
                 <span>
                   Ultima atualizacao:{" "}
@@ -168,70 +189,61 @@ function DesempenhoView() {
                 </span>
               </div>
             </div>
-            <button
-              onClick={() => loadAll({ silent: true })}
-              disabled={refreshing}
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted transition-colors hover:bg-background disabled:opacity-50"
-              title="Atualizar"
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-              />
-              Atualizar
-            </button>
+            <div className="flex items-center gap-2">
+              {isAdjust && (
+                <button
+                  type="button"
+                  onClick={() => setManualOpen(true)}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                >
+                  <Plus className="h-4 w-4" />
+                  Inserir metrics manualmente
+                </button>
+              )}
+              <button
+                onClick={() => loadAll({ silent: true })}
+                disabled={refreshing}
+                className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted transition-colors hover:bg-background disabled:opacity-50"
+                title="Atualizar"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                />
+                Atualizar
+              </button>
+            </div>
           </div>
 
           {!hasData ? (
             <EmptyState externalId={campanha.external_id} />
           ) : (
-            <>
-              <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {platformsOrdered.map(({ platform, row }) => (
-                  <PlatformCard
-                    key={platform}
-                    platform={platform}
-                    row={row}
-                    moeda={campanha.moeda}
-                  />
-                ))}
-              </div>
-
-              <section className="rounded-xl border border-border bg-surface p-5">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-xs font-semibold uppercase tracking-widest text-primary">
-                      Historico de gasto
-                    </h2>
-                    <p className="mt-0.5 text-xs text-muted">
-                      Spend diario (
-                      {history?.series.length
-                        ? primaryPlatformLabel(history.series)
-                        : "sem dados"}
-                      )
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {DAYS_OPTIONS.map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => setDays(opt)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                          days === opt
-                            ? "bg-primary text-black"
-                            : "bg-background text-muted hover:text-foreground"
-                        }`}
-                      >
-                        {opt}d
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <HistoryChart
-                  series={history?.series || []}
+            <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {platformsOrdered.map(({ platform, row }) => (
+                <PlatformCard
+                  key={platform}
+                  platform={platform}
+                  row={row}
                   moeda={campanha.moeda}
                 />
-              </section>
-            </>
+              ))}
+            </div>
+          )}
+
+          <PublishersSection
+            data={publishers}
+            moeda={campanha.moeda}
+          />
+
+          {manualOpen && (
+            <ManualMetricsModal
+              campanhaId={campanha.id}
+              moeda={campanha.moeda}
+              onClose={() => setManualOpen(false)}
+              onSuccess={() => {
+                setManualOpen(false);
+                loadAll({ silent: true });
+              }}
+            />
           )}
         </>
       )}
@@ -370,152 +382,622 @@ function platformLabel(p: MetricPlatform): string {
   return p;
 }
 
-function primaryPlatformLabel(series: CampanhaMetricsHistoryPoint[]): string {
-  // Decidimos qual platform mostrar no grafico (consolidado preferido)
-  if (series.some((s) => s.platform === "consolidado")) return "Consolidado";
-  const first = series[0]?.platform;
-  return first ? platformLabel(first) : "—";
-}
-
-function HistoryChart({
-  series,
+function PublishersSection({
+  data,
   moeda
 }: {
-  series: CampanhaMetricsHistoryPoint[];
+  data: CampanhaPublishersResponse | null;
   moeda: Moeda | string | null | undefined;
 }) {
-  // Filtra: prefere consolidado, senao primeira platform que aparecer
-  const primaryPlatform: MetricPlatform | null = useMemo(() => {
-    if (series.length === 0) return null;
-    if (series.some((s) => s.platform === "consolidado")) return "consolidado";
-    return series[0].platform;
-  }, [series]);
+  // Filtra rows: consolidado por default
+  const consolidatedRows: CampanhaPublisherRow[] = useMemo(() => {
+    if (!data?.rows) return [];
+    const consolidated = data.rows.filter((r) => r.platform === "consolidado");
+    if (consolidated.length > 0) return consolidated;
+    // Fallback: se nao tem consolidado, usa todas
+    return data.rows;
+  }, [data]);
 
-  const data = useMemo(() => {
-    if (!primaryPlatform) return [];
-    return series
-      .filter((s) => s.platform === primaryPlatform)
-      .filter((s) => s.spend_actual != null)
-      .sort((a, b) =>
-        (a.report_date || "").localeCompare(b.report_date || "")
-      );
-  }, [series, primaryPlatform]);
-
-  if (data.length === 0) {
-    return (
-      <div className="flex items-center justify-center rounded-lg border border-dashed border-border bg-background py-12">
-        <p className="text-sm text-muted">Sem dados pro periodo selecionado.</p>
-      </div>
+  const sorted = useMemo(() => {
+    return [...consolidatedRows].sort(
+      (a, b) => (b.spend_actual ?? 0) - (a.spend_actual ?? 0)
     );
-  }
-
-  const max = Math.max(...data.map((d) => d.spend_actual ?? 0));
-  const min = Math.min(...data.map((d) => d.spend_actual ?? 0));
-  const range = max - min || max || 1;
-  const padding = { top: 10, right: 12, bottom: 28, left: 56 };
-  const width = 800;
-  const height = 240;
-  const innerW = width - padding.left - padding.right;
-  const innerH = height - padding.top - padding.bottom;
-
-  const x = (i: number) => {
-    if (data.length === 1) return padding.left + innerW / 2;
-    return padding.left + (i / (data.length - 1)) * innerW;
-  };
-  const y = (v: number) =>
-    padding.top + innerH - ((v - min) / range) * innerH;
-
-  const path = data
-    .map((d, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(d.spend_actual ?? 0)}`)
-    .join(" ");
-
-  // 4 ticks no eixo Y
-  const yTicks = 4;
-  const yTickValues = Array.from({ length: yTicks + 1 }, (_, i) => {
-    return min + (range * i) / yTicks;
-  });
-
-  // Ticks no eixo X: mostra ~6 datas espacadas
-  const xTickStep = Math.max(1, Math.ceil(data.length / 6));
-  const xTickIndices = data
-    .map((_, i) => i)
-    .filter((i) => i % xTickStep === 0 || i === data.length - 1);
+  }, [consolidatedRows]);
 
   return (
-    <div className="w-full overflow-x-auto">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full"
-        style={{ minWidth: 400, height }}
-        preserveAspectRatio="none"
-      >
-        {/* Grid horizontal */}
-        {yTickValues.map((v, i) => (
-          <g key={`y-${i}`}>
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(v)}
-              y2={y(v)}
-              stroke="currentColor"
-              strokeOpacity={0.08}
-              strokeDasharray="3 3"
-            />
-            <text
-              x={padding.left - 8}
-              y={y(v) + 4}
-              textAnchor="end"
-              fontSize="10"
-              fill="currentColor"
-              opacity="0.55"
+    <section className="rounded-xl border border-border bg-surface p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-primary">
+            Publishers
+          </h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Spend por publisher{" "}
+            {data?.report_date && (
+              <>
+                — atualizado em{" "}
+                <span className="text-foreground">
+                  {fmtDate(data.report_date)}
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-background p-8 text-center">
+          <Info className="mx-auto mb-3 h-8 w-8 text-muted opacity-50" />
+          <p className="text-sm text-muted">
+            Sem dados de publisher ainda. O api_af envia diariamente apos 8h
+            (precisa de{" "}
+            <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs text-foreground">
+              publishers_lookup.enabled = true
+            </code>{" "}
+            no apps.yaml).
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-background/40">
+                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  Publisher
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                  Spend
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                  Installs/Conv
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                  % P360
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r, i) => (
+                <tr
+                  key={`${r.publisher}-${r.platform}-${i}`}
+                  className={
+                    i < sorted.length - 1 ? "border-b border-border" : ""
+                  }
+                >
+                  <td className="px-3 py-2 text-foreground">
+                    {r.publisher || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-foreground">
+                    {formatCurrency(r.spend_actual, moeda)}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-foreground">
+                    {r.installs_or_conversions != null
+                      ? r.installs_or_conversions.toLocaleString("pt-BR")
+                      : "—"}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-right font-mono ${fraudColor(
+                      r.p360_event_rate
+                    )}`}
+                  >
+                    {r.p360_event_rate != null
+                      ? `${(r.p360_event_rate * 100).toFixed(1)}%`
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------- Manual metrics modal (Adjust) ----------
+
+interface ManualPlatformRow {
+  platform: MetricPlatform;
+  spend_actual: string;
+  spend_pace_pct: string;
+  budget_used_pct: string;
+}
+
+interface ManualPublisherRow {
+  name: string;
+  spend: string;
+  installs_or_conversions: string;
+  p360_event_rate: string;
+}
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function firstDayOfMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function ManualMetricsModal({
+  campanhaId,
+  moeda,
+  onClose,
+  onSuccess
+}: {
+  campanhaId: string;
+  moeda: Moeda | string | null | undefined;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const toast = useToast();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [reportDate, setReportDate] = useState(todayIso());
+  const [dateFrom, setDateFrom] = useState(firstDayOfMonth());
+  const [dateTo, setDateTo] = useState(todayIso());
+  const [platforms, setPlatforms] = useState<ManualPlatformRow[]>([
+    {
+      platform: "consolidado",
+      spend_actual: "",
+      spend_pace_pct: "",
+      budget_used_pct: ""
+    }
+  ]);
+  const [pubRows, setPubRows] = useState<ManualPublisherRow[]>([]);
+
+  const updatePlatform = (idx: number, patch: Partial<ManualPlatformRow>) => {
+    setPlatforms((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  };
+  const addPlatform = () => {
+    setPlatforms((prev) => [
+      ...prev,
+      {
+        platform: "android",
+        spend_actual: "",
+        spend_pace_pct: "",
+        budget_used_pct: ""
+      }
+    ]);
+  };
+  const removePlatform = (idx: number) =>
+    setPlatforms((prev) => prev.filter((_, i) => i !== idx));
+
+  const updatePub = (idx: number, patch: Partial<ManualPublisherRow>) => {
+    setPubRows((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  };
+  const addPub = () =>
+    setPubRows((prev) => [
+      ...prev,
+      {
+        name: "",
+        spend: "",
+        installs_or_conversions: "",
+        p360_event_rate: ""
+      }
+    ]);
+  const removePub = (idx: number) =>
+    setPubRows((prev) => prev.filter((_, i) => i !== idx));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (!reportDate || !dateFrom || !dateTo) {
+      setError("Datas obrigatorias (report_date, date_from, date_to).");
+      return;
+    }
+
+    const platformsPayload: CampanhaMetricsManualPayload["platforms"] = {};
+    for (const row of platforms) {
+      const spend = row.spend_actual.trim()
+        ? parseNumberPtBr(row.spend_actual)
+        : null;
+      if (spend != null && (Number.isNaN(spend) || spend < 0)) {
+        setError(`Spend invalido na plataforma ${row.platform}.`);
+        return;
+      }
+      const pacePct = row.spend_pace_pct.trim()
+        ? parseNumberPtBr(row.spend_pace_pct)
+        : null;
+      const budgetUsedPct = row.budget_used_pct.trim()
+        ? parseNumberPtBr(row.budget_used_pct)
+        : null;
+      platformsPayload[row.platform] = {
+        platform: row.platform,
+        spend_actual: spend,
+        spend_pace_pct:
+          pacePct != null && !Number.isNaN(pacePct) ? pacePct : null,
+        budget_used_pct:
+          budgetUsedPct != null && !Number.isNaN(budgetUsedPct)
+            ? budgetUsedPct
+            : null
+      };
+    }
+
+    const publishersPayload: CampanhaPublisherInput[] = [];
+    for (const row of pubRows) {
+      const name = row.name.trim();
+      if (!name) continue;
+      const spend = row.spend.trim() ? parseNumberPtBr(row.spend) : null;
+      if (spend != null && (Number.isNaN(spend) || spend < 0)) {
+        setError(`Spend invalido no publisher "${name}".`);
+        return;
+      }
+      const installs = row.installs_or_conversions.trim()
+        ? Number(row.installs_or_conversions)
+        : null;
+      if (installs != null && (Number.isNaN(installs) || installs < 0)) {
+        setError(`Installs/Conv invalido no publisher "${name}".`);
+        return;
+      }
+      const p360Raw = row.p360_event_rate.trim();
+      // Aceita "5,2" como 5.2% -> 0.052, ou "0,052" como 5.2% — pra evitar ambiguidade,
+      // tratar como percentual (user digita 5 = 5%) e dividir por 100.
+      let p360: number | null = null;
+      if (p360Raw) {
+        const n = parseNumberPtBr(p360Raw);
+        if (Number.isNaN(n) || n < 0) {
+          setError(`% P360 invalido no publisher "${name}".`);
+          return;
+        }
+        p360 = n > 1 ? n / 100 : n;
+      }
+      publishersPayload.push({
+        name,
+        platform: "consolidado",
+        spend,
+        installs_or_conversions: installs,
+        p360_event_rate: p360
+      });
+    }
+
+    const payload: CampanhaMetricsManualPayload = {
+      report_date: reportDate,
+      date_from: dateFrom,
+      date_to: dateTo,
+      platforms: platformsPayload,
+      publishers: publishersPayload.length > 0 ? publishersPayload : undefined
+    };
+
+    setSubmitting(true);
+    try {
+      await apiFetch(`/campanhas/${campanhaId}/metrics/manual`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      toast.success("Metrics inseridos.");
+      onSuccess();
+    } catch (err: any) {
+      setError(err?.message || "Falha ao inserir metrics.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h3 className="text-lg font-semibold text-foreground">
+            Inserir metrics manualmente (Adjust)
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label="Fechar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {error && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-danger/20 bg-danger/10 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+              <p className="text-sm text-danger">{error}</p>
+            </div>
+          )}
+
+          <fieldset className="space-y-3">
+            <legend className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Periodo
+            </legend>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-sm text-foreground">
+                  Report date
+                </span>
+                <input
+                  type="date"
+                  value={reportDate}
+                  onChange={(e) => setReportDate(e.target.value)}
+                  className={modalInputCls}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-sm text-foreground">
+                  Date from
+                </span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className={modalInputCls}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-sm text-foreground">
+                  Date to
+                </span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className={modalInputCls}
+                />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-3">
+            <legend className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Spend por plataforma
+            </legend>
+            {platforms.map((row, idx) => (
+              <div
+                key={idx}
+                className="space-y-2 rounded-lg border border-border bg-background p-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <select
+                    value={row.platform}
+                    onChange={(e) =>
+                      updatePlatform(idx, {
+                        platform: e.target.value as MetricPlatform
+                      })
+                    }
+                    className={`${modalInputCls} max-w-[200px]`}
+                  >
+                    <option value="consolidado">consolidado</option>
+                    <option value="android">android</option>
+                    <option value="ios">ios</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => removePlatform(idx)}
+                    disabled={platforms.length <= 1}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-30"
+                    aria-label="Remover plataforma"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted">
+                      Spend ({moeda === "USD" ? "$" : "R$"})
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={row.spend_actual}
+                      onChange={(e) =>
+                        updatePlatform(idx, {
+                          spend_actual: sanitizeNumberInput(e.target.value)
+                        })
+                      }
+                      onBlur={(e) =>
+                        updatePlatform(idx, {
+                          spend_actual: blurFormatNumberPtBr(e.target.value)
+                        })
+                      }
+                      placeholder="0,00"
+                      className={modalInputCls}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted">
+                      % MTD (opcional)
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={row.spend_pace_pct}
+                      onChange={(e) =>
+                        updatePlatform(idx, {
+                          spend_pace_pct: sanitizeNumberInput(e.target.value)
+                        })
+                      }
+                      onBlur={(e) =>
+                        updatePlatform(idx, {
+                          spend_pace_pct: blurFormatNumberPtBr(e.target.value)
+                        })
+                      }
+                      placeholder="0,0"
+                      className={modalInputCls}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted">
+                      % Budget usado (opcional)
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={row.budget_used_pct}
+                      onChange={(e) =>
+                        updatePlatform(idx, {
+                          budget_used_pct: sanitizeNumberInput(e.target.value)
+                        })
+                      }
+                      onBlur={(e) =>
+                        updatePlatform(idx, {
+                          budget_used_pct: blurFormatNumberPtBr(e.target.value)
+                        })
+                      }
+                      placeholder="0,0"
+                      className={modalInputCls}
+                    />
+                  </label>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addPlatform}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
             >
-              {formatCurrencyShort(v, moeda)}
-            </text>
-          </g>
-        ))}
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar plataforma
+            </button>
+          </fieldset>
 
-        {/* X labels */}
-        {xTickIndices.map((i) => (
-          <text
-            key={`x-${i}`}
-            x={x(i)}
-            y={height - padding.bottom + 16}
-            textAnchor="middle"
-            fontSize="10"
-            fill="currentColor"
-            opacity="0.55"
-          >
-            {fmtShortDate(data[i].report_date)}
-          </text>
-        ))}
+          <fieldset className="space-y-3">
+            <legend className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Publishers (opcional)
+            </legend>
+            {pubRows.length === 0 && (
+              <p className="text-xs text-muted">
+                Nenhum publisher adicionado. Use o botao abaixo se quiser
+                detalhar.
+              </p>
+            )}
+            {pubRows.map((row, idx) => (
+              <div
+                key={idx}
+                className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border bg-background p-3 sm:grid-cols-[1fr,1fr,1fr,1fr,auto]"
+              >
+                <label className="block">
+                  <span className="mb-1 block text-xs text-muted">
+                    Publisher
+                  </span>
+                  <input
+                    type="text"
+                    value={row.name}
+                    onChange={(e) =>
+                      updatePub(idx, { name: e.target.value })
+                    }
+                    placeholder="Ex: googleadwords_int"
+                    className={modalInputCls}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-muted">
+                    Spend ({moeda === "USD" ? "$" : "R$"})
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={row.spend}
+                    onChange={(e) =>
+                      updatePub(idx, {
+                        spend: sanitizeNumberInput(e.target.value)
+                      })
+                    }
+                    onBlur={(e) =>
+                      updatePub(idx, {
+                        spend: blurFormatNumberPtBr(e.target.value)
+                      })
+                    }
+                    placeholder="0,00"
+                    className={modalInputCls}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-muted">
+                    Installs/Conv
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={row.installs_or_conversions}
+                    onChange={(e) =>
+                      updatePub(idx, {
+                        installs_or_conversions: e.target.value
+                      })
+                    }
+                    placeholder="0"
+                    className={modalInputCls}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-muted">
+                    % P360
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={row.p360_event_rate}
+                    onChange={(e) =>
+                      updatePub(idx, {
+                        p360_event_rate: sanitizeNumberInput(e.target.value)
+                      })
+                    }
+                    onBlur={(e) =>
+                      updatePub(idx, {
+                        p360_event_rate: blurFormatNumberPtBr(e.target.value)
+                      })
+                    }
+                    placeholder="0,0"
+                    className={modalInputCls}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => removePub(idx)}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                  aria-label="Remover publisher"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addPub}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar publisher
+            </button>
+          </fieldset>
 
-        {/* Path */}
-        <path
-          d={path}
-          fill="none"
-          stroke="rgb(251, 146, 60)"
-          strokeWidth={2}
-        />
-
-        {/* Pontos */}
-        {data.map((d, i) => (
-          <circle
-            key={`pt-${i}`}
-            cx={x(i)}
-            cy={y(d.spend_actual ?? 0)}
-            r={3}
-            fill="rgb(251, 146, 60)"
-          >
-            <title>{`${d.report_date}: ${formatCurrency(
-              d.spend_actual,
-              moeda
-            )}`}</title>
-          </circle>
-        ))}
-      </svg>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {submitting ? "Enviando..." : "Salvar"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
+
+const modalInputCls =
+  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-primary/60";
 
 function EmptyState({
   externalId
@@ -558,21 +1040,4 @@ function fmtDate(s: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   return s;
-}
-
-function fmtShortDate(s: string | null | undefined): string {
-  if (!s) return "";
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (m) return `${m[3]}/${m[2]}`;
-  return s;
-}
-
-function formatCurrencyShort(
-  v: number,
-  moeda: Moeda | string | null | undefined
-): string {
-  const sym = moeda === "USD" ? "$" : "R$";
-  if (Math.abs(v) >= 1_000_000) return `${sym} ${(v / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(v) >= 1_000) return `${sym} ${(v / 1_000).toFixed(0)}k`;
-  return `${sym} ${v.toFixed(0)}`;
 }

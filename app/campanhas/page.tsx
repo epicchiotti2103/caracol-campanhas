@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Megaphone,
   Search,
@@ -15,8 +15,18 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { apiFetch } from "@/lib/api";
-import { formatCurrency } from "@/lib/format";
-import type { Campanha, CampanhaEvento, CampanhaStatus, Moeda } from "@/types";
+import {
+  currentMonthString,
+  formatCurrency,
+  formatMesAnoShort
+} from "@/lib/format";
+import type {
+  Campanha,
+  CampanhaEvento,
+  CampanhaMonthsAvailable,
+  CampanhaStatus,
+  Moeda
+} from "@/types";
 
 const STATUS_OPTIONS: { value: CampanhaStatus | "todos"; label: string }[] = [
   { value: "todos", label: "Todos" },
@@ -28,13 +38,24 @@ const STATUS_OPTIONS: { value: CampanhaStatus | "todos"; label: string }[] = [
 export default function CampanhasPage() {
   return (
     <AppShell>
-      <CampanhasList />
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        }
+      >
+        <CampanhasList />
+      </Suspense>
     </AppShell>
   );
 }
 
 function CampanhasList() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const monthFromUrl = searchParams?.get("month") || "";
+
   const [campanhas, setCampanhas] = useState<Campanha[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -42,22 +63,48 @@ function CampanhasList() {
   const [statusFilter, setStatusFilter] = useState<CampanhaStatus | "todos">(
     "todos"
   );
+  const [months, setMonths] = useState<string[]>([]);
+  const [month, setMonth] = useState<string>(
+    monthFromUrl || currentMonthString()
+  );
 
-  const load = async () => {
+  // Carrega meses disponiveis
+  useEffect(() => {
+    (async () => {
+      try {
+        const res: CampanhaMonthsAvailable = await apiFetch(
+          "/campanhas?months_available=1"
+        );
+        const list = res?.months || [];
+        setMonths(list);
+        // Se o mes selecionado nao esta na lista, escolhe o primeiro
+        if (list.length > 0 && !list.includes(month)) {
+          // Se URL tinha um mes e ele nao existe, deixa esse mesmo (pode estar vazio)
+          // Senao usa o primeiro (mais recente).
+          if (!monthFromUrl) {
+            setMonth(list[0]);
+          }
+        }
+      } catch {
+        // Tolera erro — usa mes corrente
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const load = async (selectedMonth: string) => {
     setLoading(true);
     setError("");
     try {
+      const query = selectedMonth ? `?month=${selectedMonth}` : "";
       const res: { items: Campanha[] } | Campanha[] = await apiFetch(
-        "/campanhas"
+        `/campanhas${query}`
       );
       const items = Array.isArray(res) ? res : res?.items || [];
       setCampanhas(items);
     } catch (err: any) {
-      // Backend ainda nao implementado — tolera erro/404 silenciosamente
-      // mas mantem campanhas como [] pra renderizar empty state.
       setCampanhas([]);
       const msg = err?.message || "";
-      // So mostra erro se nao for 404 ou "not found" — backend pode estar fora do ar
       if (msg && !/404|not found|failed to fetch/i.test(msg)) {
         setError(msg);
       }
@@ -67,8 +114,18 @@ function CampanhasList() {
   };
 
   useEffect(() => {
-    load();
-  }, []);
+    load(month);
+    // Atualiza querystring (sem scroll)
+    const params = new URLSearchParams(searchParams?.toString() || "");
+    if (month) {
+      params.set("month", month);
+    } else {
+      params.delete("month");
+    }
+    const qs = params.toString();
+    router.replace(`/campanhas${qs ? `?${qs}` : ""}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month]);
 
   const filtered = useMemo(() => {
     return campanhas.filter((c) => {
@@ -81,6 +138,14 @@ function CampanhasList() {
       return matchStatus && matchSearch;
     });
   }, [campanhas, search, statusFilter]);
+
+  // Monta opcoes do dropdown: garantir que o mes atual aparece mesmo se nao tem dado ainda
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>(months);
+    set.add(month);
+    set.add(currentMonthString());
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [months, month]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -95,7 +160,7 @@ function CampanhasList() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={load}
+            onClick={() => load(month)}
             disabled={loading}
             className="rounded-lg border border-border bg-surface p-2 text-muted transition-colors hover:bg-surface/80 disabled:opacity-50"
             title="Atualizar"
@@ -146,6 +211,22 @@ function CampanhasList() {
               </button>
             ))}
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+              Mes
+            </span>
+            <select
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground outline-none focus:border-primary/50"
+            >
+              {monthOptions.map((m) => (
+                <option key={m} value={m}>
+                  {formatMesAnoShort(m)}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -154,6 +235,7 @@ function CampanhasList() {
               <tr className="border-b border-border">
                 {[
                   "Codigo",
+                  "Mes",
                   "Inicio",
                   "Fim",
                   "Campanha",
@@ -174,17 +256,17 @@ function CampanhasList() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center">
+                  <td colSpan={9} className="py-16 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center">
+                  <td colSpan={9} className="py-16 text-center">
                     <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
                     <p className="text-sm text-muted">
                       {campanhas.length === 0
-                        ? "Nenhuma campanha cadastrada ainda."
+                        ? `Nenhuma campanha em ${formatMesAnoShort(month)}.`
                         : "Nenhuma campanha para esse filtro."}
                     </p>
                     {campanhas.length === 0 && (
@@ -245,6 +327,9 @@ function CampanhaRow({
         <span className="font-mono text-xs font-semibold text-primary">
           {campanha.codigo || "—"}
         </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-muted">
+        {formatMesAnoShort(campanha.mes_referencia) || "—"}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-muted">
         {fmtDate(campanha.inicio)}

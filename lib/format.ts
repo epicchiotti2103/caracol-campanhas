@@ -95,3 +95,77 @@ export function blurFormatNumberPtBr(
 export function moedaShort(m: Moeda | string | null | undefined): string {
   return m === "USD" ? "$" : "R$";
 }
+
+const MES_LABELS_FULL = [
+  "Janeiro",
+  "Fevereiro",
+  "Marco",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro"
+];
+
+/**
+ * Recebe "YYYY-MM" ou "YYYY-MM-DD" e retorna "MM/YYYY" (PT-BR).
+ * Aceita variacoes — retorna "" se nao parsear.
+ */
+export function formatMesAnoShort(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  if (m) return `${m[2]}/${m[1]}`;
+  return "";
+}
+
+/**
+ * Recebe "YYYY-MM" ou "YYYY-MM-DD" e retorna "Maio/2026" (mes por extenso).
+ */
+export function formatMesAnoLong(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  if (!m) return "";
+  const year = m[1];
+  const monthIdx = parseInt(m[2], 10) - 1;
+  if (monthIdx < 0 || monthIdx > 11) return "";
+  return `${MES_LABELS_FULL[monthIdx]}/${year}`;
+}
+
+/** "YYYY-MM-DD" -> "YYYY-MM". */
+export function toMonthString(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4}-\d{2})/.exec(s);
+  return m ? m[1] : "";
+}
+
+/** "YYYY-MM" -> "YYYY-MM-01" (date do primeiro dia do mes). */
+export function monthToFirstDay(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  return m ? `${m[1]}-${m[2]}-01` : "";
+}
+
+/** Retorna "YYYY-MM" do mes corrente. */
+export function currentMonthString(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Retorna "YYYY-MM-01" do mes seguinte ao mes informado (ISO). */
+export function nextMonthFirstDay(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  if (!m) return "";
+  let year = parseInt(m[1], 10);
+  let month = parseInt(m[2], 10);
+  month += 1;
+  if (month > 12) {
+    month = 1;
+    year += 1;
+  }
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}

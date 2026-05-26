@@ -9,13 +9,21 @@ import {
   AlertCircle,
   Pencil,
   X,
-  LineChart
+  LineChart,
+  Copy
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { CampanhaForm } from "@/components/campanha-form";
 import { apiFetch } from "@/lib/api";
-import { formatCurrency } from "@/lib/format";
+import { useToast } from "@/lib/toast-context";
+import {
+  formatCurrency,
+  formatMesAnoLong,
+  nextMonthFirstDay,
+  toMonthString
+} from "@/lib/format";
 import type {
   Campanha,
   CampanhaApp,
@@ -33,12 +41,16 @@ export default function CampanhaDetailPage() {
 
 function CampanhaDetail() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const toast = useToast();
   const id = params?.id;
 
   const [campanha, setCampanha] = useState<Campanha | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -59,6 +71,34 @@ function CampanhaDetail() {
       cancelled = true;
     };
   }, [id]);
+
+  const handleDuplicate = async () => {
+    if (!campanha) return;
+    setDuplicating(true);
+    try {
+      const created: { id?: string } = await apiFetch(
+        `/campanhas/${campanha.id}/duplicate`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      toast.success("Campanha duplicada.");
+      setDuplicateOpen(false);
+      if (created?.id) {
+        router.push(`/campanhas/${created.id}`);
+      }
+    } catch (err: any) {
+      const msg = err?.message || "Falha ao duplicar campanha.";
+      if (/ja existe|already exists|409/i.test(msg)) {
+        const nextMes = nextMonthFirstDay(campanha.mes_referencia || "");
+        toast.error(
+          `Ja existe campanha pro mes ${formatMesAnoLong(nextMes)}. Edite a existente.`
+        );
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setDuplicating(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
@@ -85,11 +125,18 @@ function CampanhaDetail() {
         <>
           <div className="mb-6 flex items-start justify-between gap-4">
             <div className="min-w-0">
-              {campanha.codigo && (
-                <p className="mb-1 inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
-                  {campanha.codigo}
-                </p>
-              )}
+              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                {campanha.codigo && (
+                  <span className="inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
+                    {campanha.codigo}
+                  </span>
+                )}
+                {campanha.mes_referencia && (
+                  <span className="inline-block rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground">
+                    {formatMesAnoLong(campanha.mes_referencia)}
+                  </span>
+                )}
+              </div>
               <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">
                 Campanha
               </h4>
@@ -99,13 +146,24 @@ function CampanhaDetail() {
             </div>
             <div className="flex items-center gap-2">
               {!editing && (
-                <Link
-                  href={`/campanhas/${campanha.id}/desempenho`}
-                  className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
-                >
-                  <LineChart className="h-4 w-4" />
-                  Desempenho
-                </Link>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setDuplicateOpen(true)}
+                    className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                    title="Duplicar pro proximo mes"
+                  >
+                    <Copy className="h-4 w-4" />
+                    Duplicar pro proximo mes
+                  </button>
+                  <Link
+                    href={`/campanhas/${campanha.id}/desempenho`}
+                    className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                  >
+                    <LineChart className="h-4 w-4" />
+                    Desempenho
+                  </Link>
+                </>
               )}
               <button
                 type="button"
@@ -131,6 +189,16 @@ function CampanhaDetail() {
             <CampanhaForm initial={campanha} campanhaId={campanha.id} />
           ) : (
             <CampanhaView campanha={campanha} />
+          )}
+
+          {duplicateOpen && (
+            <DuplicateModal
+              campanhaName={campanha.name}
+              currentMes={campanha.mes_referencia}
+              submitting={duplicating}
+              onConfirm={handleDuplicate}
+              onCancel={() => setDuplicateOpen(false)}
+            />
           )}
         </>
       )}
@@ -171,6 +239,15 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
                 : "—"}
             </p>
           </Field>
+          <Field label="MMP">
+            <p className="text-sm uppercase text-foreground">
+              {campanha.mmp === "adjust"
+                ? "Adjust"
+                : campanha.mmp === "appsflyer"
+                ? "AppsFlyer"
+                : "—"}
+            </p>
+          </Field>
           <Field label="Timezone">
             <p className="text-sm text-foreground">
               {campanha.timezone || "—"}
@@ -179,6 +256,11 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
           <Field label="ID externo (api_af)">
             <p className="font-mono text-sm text-foreground">
               {campanha.external_id || "—"}
+            </p>
+          </Field>
+          <Field label="Mes de referencia">
+            <p className="text-sm text-foreground">
+              {formatMesAnoLong(campanha.mes_referencia) || "—"}
             </p>
           </Field>
         </div>
@@ -373,7 +455,7 @@ function EventosTable({
               Evento
             </th>
             <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
-              Target CPA
+              PO (CPA)
             </th>
             <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
               Payout
@@ -474,6 +556,79 @@ function AppsTable({ apps }: { apps: CampanhaApp[] | undefined }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function DuplicateModal({
+  campanhaName,
+  currentMes,
+  submitting,
+  onConfirm,
+  onCancel
+}: {
+  campanhaName: string;
+  currentMes: string | null | undefined;
+  submitting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const fromLabel = formatMesAnoLong(currentMes) || "—";
+  const toIso = nextMonthFirstDay(currentMes || "");
+  const toLabel = formatMesAnoLong(toIso) || "—";
+  const fromShort = toMonthString(currentMes || "")
+    .replace(/^(\d{4})-(\d{2})$/, "$2/$1");
+  const toShort = toIso.replace(/^(\d{4})-(\d{2})-\d{2}$/, "$2/$1");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h3 className="text-lg font-semibold text-foreground">
+            Duplicar pro proximo mes
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label="Fechar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <p className="mb-5 text-sm text-foreground">
+          Duplicar &quot;
+          <span className="font-medium">
+            {campanhaName} — {fromShort || fromLabel}
+          </span>
+          &quot; pro mes{" "}
+          <span className="font-semibold text-primary">
+            {toShort || toLabel}
+          </span>
+          ? Vai copiar apps, media sources e eventos pagos. Voce edita depois se
+          quiser ajustar budget/eventos.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            Confirmar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

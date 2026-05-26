@@ -20,6 +20,7 @@ import type {
   CampanhaBudgetMode,
   CampanhaEvento,
   CampanhaMediaSource,
+  CampanhaMMP,
   CampanhaStatus,
   CampanhaTipo,
   MediaSourceCampaignType,
@@ -42,6 +43,21 @@ const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
   { value: "UTC", label: "UTC" },
   { value: "America/New_York", label: "America/New_York (ET)" },
   { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong (HKT)" }
+];
+
+const MESES_LABELS = [
+  "Janeiro",
+  "Fevereiro",
+  "Marco",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro"
 ];
 
 interface CampanhaFormProps {
@@ -152,6 +168,29 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   );
   const [externalId, setExternalId] = useState<string>(
     initial?.external_id || ""
+  );
+
+  // mes_referencia (Fase 2): UI = 2 selects (mes 01-12, ano corrente +/- 1 / +1).
+  // Default = mes corrente. Valor salvo: YYYY-MM-01.
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1; // 1..12
+  const parseMesRef = (
+    raw: string | null | undefined
+  ): { mes: number; ano: number } => {
+    if (raw) {
+      const m = /^(\d{4})-(\d{2})/.exec(raw);
+      if (m) return { mes: parseInt(m[2], 10), ano: parseInt(m[1], 10) };
+    }
+    return { mes: currentMonth, ano: currentYear };
+  };
+  const initialMesRef = parseMesRef(initial?.mes_referencia);
+  const [mesRefMes, setMesRefMes] = useState<number>(initialMesRef.mes);
+  const [mesRefAno, setMesRefAno] = useState<number>(initialMesRef.ano);
+
+  // mmp (Fase 2): default appsflyer
+  const [mmp, setMmp] = useState<CampanhaMMP>(
+    (initial?.mmp as CampanhaMMP) || "appsflyer"
   );
 
   // Eventos pagos — comeca com 1 linha vazia se nao tem nada
@@ -278,7 +317,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
       const payout = parseOpt(row.payout, "Payout");
       if (payout === "ERR") return;
-      const targetCpa = parseOpt(row.target_cpa, "Target CPA");
+      const targetCpa = parseOpt(row.target_cpa, "PO (CPA)");
       if (targetCpa === "ERR") return;
 
       let budgetMonthly: number | null = null;
@@ -362,6 +401,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       });
     }
 
+    const mesRefIso = `${mesRefAno}-${String(mesRefMes).padStart(2, "0")}-01`;
+
     const payload: Record<string, any> = {
       name: trimmedName,
       status,
@@ -377,6 +418,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       budget_mode: budgetMode,
       timezone: timezone || null,
       external_id: externalId.trim() || null,
+      mes_referencia: mesRefIso,
+      mmp,
       criativo: criativo.trim() || null,
       obs: obs.trim() || null,
       eventos_pagos: cleanEventos,
@@ -442,6 +485,63 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
             ))}
           </select>
         </Field>
+      </Section>
+
+      <Section title="Mes de referencia e MMP">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            label="Mes de referencia"
+            hint="Mes da campanha (snapshot mensal)"
+          >
+            <div className="flex gap-2">
+              <select
+                value={mesRefMes}
+                onChange={(e) => setMesRefMes(parseInt(e.target.value, 10))}
+                className={inputCls}
+                aria-label="Mes"
+              >
+                {MESES_LABELS.map((label, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    {String(i + 1).padStart(2, "0")} — {label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={mesRefAno}
+                onChange={(e) => setMesRefAno(parseInt(e.target.value, 10))}
+                className={inputCls}
+                aria-label="Ano"
+              >
+                {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </Field>
+          <Field
+            label="MMP"
+            hint="Adjust ainda nao tem integracao automatica — metrics via form manual"
+          >
+            <div className="flex gap-2">
+              {(["appsflyer", "adjust"] as CampanhaMMP[]).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => setMmp(opt)}
+                  className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                    mmp === opt
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted hover:text-foreground"
+                  }`}
+                >
+                  {opt === "appsflyer" ? "AppsFlyer" : "Adjust"}
+                </button>
+              ))}
+            </div>
+          </Field>
+        </div>
       </Section>
 
       <Section title="Tipo e budget">
@@ -627,8 +727,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
             }`}
           >
             <span>Nome</span>
-            <span title="CPA contratado (preco que voce paga por evento)">
-              Target CPA
+            <span title="PO contratado por evento (preco pago pelo cliente)">
+              PO (CPA)
             </span>
             <span title="Quanto voce repassa ao publisher">Payout</span>
             {budgetMode === "per_event" && <span>Budget mensal</span>}
@@ -655,7 +755,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 value={row.target_cpa}
                 onChange={(v) => updateEvento(idx, { target_cpa: v })}
                 prefix={moedaSym}
-                aria-label="Target CPA"
+                aria-label="PO (CPA)"
               />
               <PtBrCurrencyInput
                 value={row.payout}

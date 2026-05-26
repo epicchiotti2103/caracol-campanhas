@@ -15,6 +15,8 @@ export type MetricPlatform = "android" | "ios" | "consolidado";
 
 export type MediaSourceCampaignType = "cpa" | "cpi";
 
+export type CampanhaMMP = "appsflyer" | "adjust";
+
 /**
  * 1 evento da campanha = nome + payout (repasse) + target_cpa (CPA contratado)
  * + budget_monthly (so quando budget_mode === 'per_event').
@@ -79,6 +81,10 @@ export interface Campanha {
   timezone?: string | null;
   external_id?: string | null;
 
+  // Fase 2 — snapshot mensal + MMP
+  mes_referencia: string; // ISO YYYY-MM-01
+  mmp: CampanhaMMP;
+
   // Eventos pagos (backend usa esse nome). Moeda vem da campanha.
   eventos_pagos?: CampanhaEvento[];
 
@@ -140,4 +146,53 @@ export interface CampanhaMetricsHistoryPoint {
 export interface CampanhaMetricsHistory {
   days: number;
   series: CampanhaMetricsHistoryPoint[];
+}
+
+// ---- Fase 2: publishers + dashboard summary + ingestao manual (adjust) ----
+
+/** Linha do GET /campanhas/{id}/metrics/publishers (response). */
+export interface CampanhaPublisherRow {
+  publisher: string;
+  platform: MetricPlatform;
+  spend_actual: number | null;
+  installs_or_conversions: number | null;
+  p360_event_rate: number | null;
+}
+
+export interface CampanhaPublishersResponse {
+  month: string | null;
+  report_date: string | null;
+  rows: CampanhaPublisherRow[];
+}
+
+/** Linha de publisher no payload do POST /metrics/manual (input — usa `name`/`spend`). */
+export interface CampanhaPublisherInput {
+  name: string;
+  platform?: MetricPlatform;
+  spend?: number | null;
+  installs_or_conversions?: number | null;
+  p360_event_rate?: number | null;
+}
+
+/** Body de POST /campanhas/{id}/metrics/manual. */
+export interface CampanhaMetricsManualPayload {
+  report_date: string;
+  date_from: string;
+  date_to: string;
+  platforms: Partial<Record<MetricPlatform, Partial<CampanhaMetricsRow>>>;
+  publishers?: CampanhaPublisherInput[];
+}
+
+export interface CampanhaDashboardSummary {
+  month: string;
+  campanhas_count: number;
+  budget_total: number;
+  spend_total: number;
+  budget_used_pct: number | null;
+  by_status: Record<CampanhaStatus, number>;
+  by_tipo: Record<CampanhaTipo, number>;
+}
+
+export interface CampanhaMonthsAvailable {
+  months: string[]; // ["YYYY-MM", ...] desc
 }

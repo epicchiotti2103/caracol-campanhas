@@ -1,16 +1,16 @@
 "use client";
 
 // Dashboard cross-campanha. Lista TODAS as campanhas com a linha consolidada
-// (mais recente) de cada uma: gasto/budget, % MTD, pace_status, % P360 Evt,
-// % PA False e data de atualizacao.
+// (mais recente) de cada uma + big numbers do mes (via /dashboard/summary).
 //
-// Estrategia de fetch (opcao A do plano): GET /campanhas pega a lista,
+// Estrategia de fetch: GET /campanhas?month=YYYY-MM pega a lista do mes,
 // depois Promise.all em /campanhas/{id}/metrics/latest pra cada uma.
-// Se a lista crescer (>20 campanhas), vale pedir endpoint agregador
-// /api/v1/campanhas/metrics/summary no backend (reportado no outbox).
+// /dashboard/summary?month=YYYY-MM pega os totals (campanhas_count, budget_total,
+// spend_total, budget_used_pct).
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search,
   RefreshCw,
@@ -24,7 +24,11 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { apiFetch } from "@/lib/api";
-import { formatCurrency } from "@/lib/format";
+import {
+  currentMonthString,
+  formatCurrency,
+  formatMesAnoShort
+} from "@/lib/format";
 import {
   paceColor,
   pacePctColor,
@@ -35,8 +39,10 @@ import {
 } from "@/lib/pace";
 import type {
   Campanha,
+  CampanhaDashboardSummary,
   CampanhaMetricsLatest,
   CampanhaMetricsRow,
+  CampanhaMonthsAvailable,
   CampanhaStatus,
   CampanhaTipo,
   MetricPlatform,
@@ -58,8 +64,6 @@ const TIPO_OPTIONS: { value: CampanhaTipo | "todos"; label: string }[] = [
   { value: "rtg", label: "RTG" }
 ];
 
-// Inclui "sem dados" como opcao explicita pra filtrar campanhas que ainda nao
-// receberam dados do api_af.
 const PACE_OPTIONS: { value: string; label: string }[] = [
   { value: "todos", label: "Todos" },
   { value: "OK", label: "OK" },
@@ -69,27 +73,40 @@ const PACE_OPTIONS: { value: string; label: string }[] = [
   { value: "SEM_DADOS", label: "Sem dados" }
 ];
 
-// Linha do dashboard: campanha + metrics consolidadas pra ela.
 interface CampanhaSummary {
   campanha: Campanha;
-  // Row escolhida pra ser exibida (consolidado preferido, fallback pra primeira platform).
   row: CampanhaMetricsRow | null;
-  // Data mais recente entre todas as plataformas (pra exibir "ultima atualizacao").
   reportDate: string | null;
-  // True quando NENHUMA platform tem dados — empty state na linha.
   noData: boolean;
 }
 
 export default function DesempenhoDashboardPage() {
   return (
     <AppShell>
-      <DesempenhoDashboard />
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        }
+      >
+        <DesempenhoDashboard />
+      </Suspense>
     </AppShell>
   );
 }
 
 function DesempenhoDashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const monthFromUrl = searchParams?.get("month") || "";
+
   const [summaries, setSummaries] = useState<CampanhaSummary[]>([]);
+  const [summary, setSummary] = useState<CampanhaDashboardSummary | null>(null);
+  const [months, setMonths] = useState<string[]>([]);
+  const [month, setMonth] = useState<string>(
+    monthFromUrl || currentMonthString()
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -100,18 +117,46 @@ function DesempenhoDashboard() {
   const [tipoFilter, setTipoFilter] = useState<CampanhaTipo | "todos">("todos");
   const [paceFilter, setPaceFilter] = useState<string>("todos");
 
-  const loadAll = async (opts?: { silent?: boolean }) => {
+  // Carrega meses disponiveis
+  useEffect(() => {
+    (async () => {
+      try {
+        const res: CampanhaMonthsAvailable = await apiFetch(
+          "/campanhas?months_available=1"
+        );
+        const list = res?.months || [];
+        setMonths(list);
+        if (list.length > 0 && !monthFromUrl && !list.includes(month)) {
+          setMonth(list[0]);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadAll = async (
+    selectedMonth: string,
+    opts?: { silent?: boolean }
+  ) => {
     if (opts?.silent) setRefreshing(true);
     else setLoading(true);
     setError("");
     try {
-      const res: { items: Campanha[] } | Campanha[] = await apiFetch(
-        "/campanhas"
-      );
-      const campanhas = Array.isArray(res) ? res : res?.items || [];
+      const monthQuery = selectedMonth ? `?month=${selectedMonth}` : "";
+      const [listRes, summaryRes] = await Promise.all([
+        apiFetch(`/campanhas${monthQuery}`),
+        apiFetch(
+          `/campanhas/dashboard/summary${monthQuery}`
+        ).catch(() => null)
+      ]);
+      const campanhas: Campanha[] = Array.isArray(listRes)
+        ? listRes
+        : listRes?.items || [];
 
-      // Promise.all pra metrics/latest de cada campanha.
-      // settled (em vez de all) pra nao quebrar a lista inteira se 1 falhar.
+      setSummary(summaryRes as CampanhaDashboardSummary | null);
+
       const results = await Promise.allSettled(
         campanhas.map((c) =>
           apiFetch(`/campanhas/${c.id}/metrics/latest`).then(
@@ -131,7 +176,6 @@ function DesempenhoDashboard() {
         if (keys.length === 0 || !latest?.report_date) {
           return { campanha, row: null, reportDate: null, noData: true };
         }
-        // Escolhe row: consolidado > android > ios > qualquer outra
         let row: CampanhaMetricsRow | null = null;
         for (const p of PLATFORM_PRIORITY) {
           if (platforms[p]) {
@@ -154,11 +198,11 @@ function DesempenhoDashboard() {
       setSummaries(next);
     } catch (err: any) {
       const msg = err?.message || "";
-      // 404/network: trata como lista vazia (mesmo padrao da /campanhas)
       if (msg && !/404|not found|failed to fetch/i.test(msg)) {
         setError(msg);
       }
       setSummaries([]);
+      setSummary(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -166,8 +210,18 @@ function DesempenhoDashboard() {
   };
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    loadAll(month);
+    // Atualiza querystring
+    const params = new URLSearchParams(searchParams?.toString() || "");
+    if (month) {
+      params.set("month", month);
+    } else {
+      params.delete("month");
+    }
+    const qs = params.toString();
+    router.replace(`/desempenho${qs ? `?${qs}` : ""}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -195,9 +249,16 @@ function DesempenhoDashboard() {
 
   const totalCount = summaries.length;
 
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>(months);
+    set.add(month);
+    set.add(currentMonthString());
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [months, month]);
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6 flex items-center justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">
             Desempenho
@@ -206,20 +267,38 @@ function DesempenhoDashboard() {
             Dashboard cross-campanha
           </h1>
           <p className="mt-1 text-sm text-muted">
-            KPIs consolidados (linha mais recente) de todas as campanhas.
+            KPIs consolidados (linha mais recente) das campanhas do mes.
           </p>
         </div>
-        <button
-          onClick={() => loadAll({ silent: true })}
-          disabled={refreshing || loading}
-          className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted transition-colors hover:bg-background disabled:opacity-50"
-          title="Atualizar"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-          />
-          Atualizar
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+              Mes
+            </span>
+            <select
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground outline-none focus:border-primary/50"
+            >
+              {monthOptions.map((m) => (
+                <option key={m} value={m}>
+                  {formatMesAnoShort(m)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => loadAll(month, { silent: true })}
+            disabled={refreshing || loading}
+            className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted transition-colors hover:bg-background disabled:opacity-50"
+            title="Atualizar"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            Atualizar
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -228,6 +307,8 @@ function DesempenhoDashboard() {
           <p className="text-sm text-danger">{error}</p>
         </div>
       )}
+
+      <BigNumbers summary={summary} loading={loading} />
 
       <div className="rounded-xl border border-border bg-surface">
         <FiltersBar
@@ -246,7 +327,7 @@ function DesempenhoDashboard() {
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
         ) : totalCount === 0 ? (
-          <EmptyStateNoCampanhas />
+          <EmptyStateNoCampanhas month={month} />
         ) : filtered.length === 0 ? (
           <EmptyStateNoFilter />
         ) : (
@@ -298,6 +379,94 @@ function DesempenhoDashboard() {
         )}
       </div>
     </div>
+  );
+}
+
+function BigNumbers({
+  summary,
+  loading
+}: {
+  summary: CampanhaDashboardSummary | null;
+  loading: boolean;
+}) {
+  const budgetUsedPct = summary?.budget_used_pct
+    ? summary.budget_used_pct * 100
+    : null;
+
+  const usedColor = pacePctColor(budgetUsedPct);
+
+  return (
+    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiCard
+        label="Budget total do mes"
+        value={
+          summary?.budget_total != null
+            ? formatCurrency(summary.budget_total, "BRL")
+            : loading
+            ? "..."
+            : "—"
+        }
+      />
+      <KpiCard
+        label="Gasto total do mes"
+        value={
+          summary?.spend_total != null
+            ? formatCurrency(summary.spend_total, "BRL")
+            : loading
+            ? "..."
+            : "—"
+        }
+      />
+      <KpiCard
+        label="% consumido"
+        value={
+          budgetUsedPct != null
+            ? `${budgetUsedPct.toFixed(1)}%`
+            : loading
+            ? "..."
+            : "—"
+        }
+        valueClass={usedColor || undefined}
+      />
+      <KpiCard
+        label="Campanhas no mes"
+        value={
+          summary?.campanhas_count != null
+            ? String(summary.campanhas_count)
+            : loading
+            ? "..."
+            : "0"
+        }
+        compact
+      />
+    </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  valueClass,
+  compact
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  compact?: boolean;
+}) {
+  return (
+    <article className="rounded-xl border border-border bg-surface p-5">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted">
+        {label}
+      </p>
+      <p
+        className={`mt-2 font-mono ${
+          compact ? "text-xl" : "text-2xl"
+        } font-semibold ${valueClass || "text-foreground"}`}
+      >
+        {value}
+      </p>
+    </article>
   );
 }
 
@@ -530,22 +699,22 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   );
 }
 
-function EmptyStateNoCampanhas() {
+function EmptyStateNoCampanhas({ month }: { month: string }) {
   return (
     <div className="py-20 text-center">
       <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
       <p className="mb-1 text-sm font-semibold text-foreground">
-        Nenhuma campanha cadastrada.
+        Nenhuma campanha em {formatMesAnoShort(month) || "—"}.
       </p>
       <p className="mx-auto mb-5 max-w-md text-sm text-muted">
-        Cadastre a primeira campanha pra comecar a ver os KPIs aqui.
+        Cadastre uma campanha ou troque o mes selecionado.
       </p>
       <Link
         href="/campanhas/new"
         className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
       >
         <Plus className="h-4 w-4" />
-        Criar primeira
+        Criar campanha
       </Link>
     </div>
   );
@@ -561,4 +730,3 @@ function EmptyStateNoFilter() {
     </div>
   );
 }
-
