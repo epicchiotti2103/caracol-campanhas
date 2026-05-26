@@ -24,6 +24,7 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - `/campanhas/new` — form completo: Identificacao, **Tipo e budget (UA/RTG, budget_mode, timezone, external_id)**, Periodo, App/parceiro, Financeiro (budget + moeda BRL/USD com mascara PT-BR), **Eventos pagos (nome + target_cpa + payout + budget_monthly condicional)**, **Apps (N plataformas android/ios)**, **Media sources (cpa/cpi)**, Criativo e Observacoes
 - `/campanhas/[id]` — detalhe com toggle in-place pra editar (sem rota `/edit` separada); botao "Desempenho" leva pra `/campanhas/[id]/desempenho`
 - `/campanhas/[id]/desempenho` — cards por plataforma (consolidado, android, ios) com gasto/budget + pace + fraude P360 + PA False, alem de grafico de historico (7/30/90 dias) consumindo `/api/v1/campanhas/{id}/metrics/{latest,history}`
+- `/desempenho` — dashboard cross-campanha (link na navbar). Tabela com a linha consolidada (mais recente) de cada campanha: gasto/budget com barra, % MTD, pace_status, % P360 Evt, % PA False, data da ultima atualizacao. Filtros: status / tipo (UA/RTG) / pace_status (incl. "sem dados") / busca por nome/codigo. Fetch: 1 chamada a `/campanhas` + Promise.allSettled em `/{id}/metrics/latest` por campanha (opcao A; pra >20 campanhas pedir endpoint agregador no backend)
 
 ## Modelo de dados (campanha)
 
@@ -98,4 +99,5 @@ Copiados do NF/Tracker — quando a duplicacao virar dor real, vale extrair pra 
 - `lib/toast-context.tsx`
 - `lib/config.ts`
 - `lib/format.ts` (`formatCurrency` + helpers PT-BR `formatNumberPtBr`/`parseNumberPtBr`/`blurFormatNumberPtBr`/`sanitizeNumberInput` usados nos inputs monetarios pra aceitar virgula)
+- `lib/pace.ts` (helpers de cor/badge pro `pace_status` e taxas de fraude — usado pelas duas telas de desempenho)
 - `components/app-shell.tsx`, `components/navbar.tsx`, `components/status-badge.tsx`

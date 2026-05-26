@@ -5,12 +5,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { HUB_URL } from "@/lib/config";
-import { Megaphone, LogOut, ArrowLeft, ShieldCheck, User } from "lucide-react";
+import {
+  Megaphone,
+  LogOut,
+  ArrowLeft,
+  ShieldCheck,
+  User,
+  LineChart
+} from "lucide-react";
 
 type LinkDef = { href: string; label: string; icon: any };
 
 const LINKS: LinkDef[] = [
-  { href: "/campanhas", label: "Campanhas", icon: Megaphone }
+  { href: "/campanhas", label: "Campanhas", icon: Megaphone },
+  { href: "/desempenho", label: "Desempenho", icon: LineChart }
 ];
 
 export function Navbar() {

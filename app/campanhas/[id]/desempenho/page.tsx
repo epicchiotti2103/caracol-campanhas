@@ -14,6 +14,13 @@ import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { apiFetch } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+import {
+  paceColor,
+  pacePctColor,
+  fraudColor,
+  paceBadgeClasses,
+  normalizePaceStatus
+} from "@/lib/pace";
 import type {
   Campanha,
   CampanhaMetricsHistory,
@@ -245,7 +252,7 @@ function PlatformCard({
   const budget = row.budget_monthly ?? 0;
   const budgetUsedPct = row.budget_used_pct;
   const spendPacePct = row.spend_pace_pct;
-  const paceStatus = (row.pace_status || "").toUpperCase();
+  const paceStatus = normalizePaceStatus(row.pace_status);
 
   return (
     <article className="space-y-3 rounded-xl border border-border bg-surface p-5">
@@ -347,48 +354,15 @@ function PaceBadge({ status }: { status: string }) {
       </span>
     );
   }
-  const map: Record<string, string> = {
-    OK: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-    OVERPACING: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-    UNDERPACING: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-    "MUITO ABAIXO": "border-amber-500/30 bg-amber-500/10 text-amber-300"
-  };
-  const cls =
-    map[status] || "border-zinc-500/30 bg-zinc-500/10 text-zinc-300";
   return (
     <span
-      className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${cls}`}
+      className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${paceBadgeClasses(
+        status
+      )}`}
     >
       {status}
     </span>
   );
-}
-
-function paceColor(
-  status: string,
-  budgetUsedPct: number | null | undefined
-): string {
-  if (status === "OVERPACING" || (budgetUsedPct != null && budgetUsedPct > 120))
-    return "bg-rose-500";
-  if (status === "UNDERPACING" || status === "MUITO ABAIXO")
-    return "bg-amber-500";
-  if (status === "OK") return "bg-emerald-500";
-  return "bg-zinc-500";
-}
-
-function pacePctColor(pct: number | null | undefined): string {
-  if (pct == null) return "";
-  if (pct < 70) return "text-rose-300";
-  if (pct >= 90 && pct <= 120) return "text-emerald-300";
-  return "text-amber-300"; // 70-90 ou >120
-}
-
-function fraudColor(rate: number | null | undefined): string {
-  if (rate == null) return "";
-  const pct = rate * 100;
-  if (pct < 5) return "text-emerald-300";
-  if (pct <= 25) return "text-amber-300";
-  return "text-rose-300";
 }
 
 function platformLabel(p: MetricPlatform): string {

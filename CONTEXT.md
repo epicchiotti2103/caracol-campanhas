@@ -43,6 +43,8 @@ caracol-campanhas/
       new/page.tsx               Form de criacao (so usa <CampanhaForm />)
       [id]/page.tsx              Detalhe com toggle in-place pra editar
       [id]/desempenho/page.tsx   Cards por plataforma + grafico de historico (api_af)
+    desempenho/
+      page.tsx                   Dashboard cross-campanha (KPIs consolidados de TODAS)
   components/
     app-shell.tsx                Layout com navbar
     bootstrap-gate.tsx           Gate de acesso via /hub/me/apps
@@ -54,6 +56,7 @@ caracol-campanhas/
     auth-context.tsx             Sessao + SSO (REPLICADO nos N apps)
     config.ts                    API_BASE_URL, HUB_URL
     format.ts                    formatCurrency + mascara PT-BR (virgula decimal)
+    pace.ts                      Helpers de cor/badge pro pace_status + taxas de fraude
     toast-context.tsx            Toasts globais
   types/index.ts                 Campanha, CampanhaEvento, CampanhaApp, CampanhaMediaSource, CampanhaMetrics*
   middleware.ts                  Redireciona pra /login se nao autenticado
@@ -136,7 +139,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=(painel Supabase)
 - [x] **Fase 1 — backend** (tracker): rotas CRUD `/api/v1/campanhas/*`, migrations das tabelas `campanhas`, `campanhas_users`, `campanhas_eventos_pagos`
 - [x] **Fase 2 — frontend funcional**: lista, edicao inline, atribuir gestores, codigo CMP-NNN
 - [x] **Fase 3 — payout no evento** (22/05): drop `campanhas_pos`, payout vira propriedade do evento
-- [x] **Fase 4 — api_af integration** (26/05): novos campos `tipo`/`budget_mode`/`timezone`/`external_id`, tabelas `campanhas_apps`/`campanhas_media_sources`/`campanhas_metrics_daily`, eventos ganham `target_cpa`/`budget_monthly`, tela `/desempenho`
+- [x] **Fase 4 — api_af integration** (26/05): novos campos `tipo`/`budget_mode`/`timezone`/`external_id`, tabelas `campanhas_apps`/`campanhas_media_sources`/`campanhas_metrics_daily`, eventos ganham `target_cpa`/`budget_monthly`, tela `/campanhas/[id]/desempenho`
+- [x] **Fase 4.1 — dashboard cross-campanha** (26/05): rota `/desempenho` listando todas as campanhas com KPIs consolidados (gasto/budget, % MTD, pace, P360, PA False); link "Desempenho" na navbar
 - [ ] **Fase 5 — integracao com NF**: NF passa a usar dropdown de campanhas em vez de texto livre; FK `nf_invoices.campanha_id` + backfill
 
 ## Decisoes tomadas
