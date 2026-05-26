@@ -225,6 +225,7 @@ export interface FechamentoPublisher {
   platform?: string | null;
   spend_final: number;
   installs_or_conversions?: number | null;
+  p360_event_rate?: number | null;
   notes?: string | null;
   locked?: boolean;
   locked_at?: string | null;
@@ -261,6 +262,7 @@ export interface FechamentoUpsertPayload {
     platform?: string | null;
     spend_final: number;
     installs_or_conversions?: number | null;
+    p360_event_rate?: number | null;
     notes?: string | null;
   }>;
 }

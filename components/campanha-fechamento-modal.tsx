@@ -54,11 +54,11 @@ interface Props {
 interface PublisherRow {
   id?: string | null;
   publisher_name: string;
-  platform: string;
+  platform: string; // sempre "consolidado" no MVP — coluna nao exibida
   spend_real_display: string; // read-only
   spend_real_raw: number | null;
   spend_final_input: string; // mascara PT-BR
-  installs_or_conversions: string; // string pra evitar coercao prematura
+  p360_event_rate: number | null; // % fraud events (Protect 360 AF) — read-only
   notes: string;
 }
 
@@ -72,10 +72,7 @@ function toRow(p: FechamentoPublisher, moeda: string | null | undefined): Publis
     spend_real_raw: p.spend_real ?? null,
     spend_final_input:
       p.spend_final != null ? blurFormatNumberPtBr(String(p.spend_final), 2) : "",
-    installs_or_conversions:
-      p.installs_or_conversions != null
-        ? String(p.installs_or_conversions)
-        : "",
+    p360_event_rate: p.p360_event_rate ?? null,
     notes: p.notes || ""
   };
 }
@@ -223,7 +220,7 @@ export function CampanhaFechamentoModal({
         spend_real_display: "—",
         spend_real_raw: null,
         spend_final_input: "",
-        installs_or_conversions: "",
+        p360_event_rate: null,
         notes: ""
       }
     ]);
@@ -251,20 +248,11 @@ export function CampanhaFechamentoModal({
         setError(`Spend final invalido no publisher "${name}".`);
         return;
       }
-      const installsStr = p.installs_or_conversions.trim();
-      let installs: number | null = null;
-      if (installsStr) {
-        installs = Number(installsStr);
-        if (!Number.isFinite(installs) || installs < 0) {
-          setError(`Installs/Conv invalido no publisher "${name}".`);
-          return;
-        }
-      }
       publishersPayload.push({
         publisher_name: name,
         platform: p.platform || null,
         spend_final: spend,
-        installs_or_conversions: installs,
+        p360_event_rate: p.p360_event_rate,
         notes: p.notes.trim() || null
       });
     }
@@ -567,9 +555,6 @@ export function CampanhaFechamentoModal({
                           <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                             Publisher
                           </th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-                            Platform
-                          </th>
                           <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
                             Spend real
                           </th>
@@ -577,7 +562,7 @@ export function CampanhaFechamentoModal({
                             Spend final {moedaPrefix}
                           </th>
                           <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
-                            Installs/Conv
+                            % Fraud Events
                           </th>
                           {!readOnly && (
                             <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
@@ -610,20 +595,6 @@ export function CampanhaFechamentoModal({
                                 className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                               />
                             </td>
-                            <td className="px-3 py-2">
-                              <select
-                                value={p.platform}
-                                onChange={(e) =>
-                                  updatePub(idx, { platform: e.target.value })
-                                }
-                                disabled={readOnly}
-                                className="rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-muted outline-none focus:border-primary/40 disabled:opacity-60"
-                              >
-                                <option value="consolidado">consolidado</option>
-                                <option value="android">android</option>
-                                <option value="ios">ios</option>
-                              </select>
-                            </td>
                             <td className="px-3 py-2 text-right font-mono text-xs text-muted">
                               {p.spend_real_display}
                             </td>
@@ -651,20 +622,10 @@ export function CampanhaFechamentoModal({
                                 className="w-32 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                               />
                             </td>
-                            <td className="px-3 py-2 text-right">
-                              <input
-                                type="number"
-                                min="0"
-                                value={p.installs_or_conversions}
-                                onChange={(e) =>
-                                  updatePub(idx, {
-                                    installs_or_conversions: e.target.value
-                                  })
-                                }
-                                disabled={readOnly}
-                                placeholder="0"
-                                className="w-24 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
-                              />
+                            <td className="px-3 py-2 text-right font-mono text-xs text-muted">
+                              {p.p360_event_rate != null
+                                ? `${(p.p360_event_rate * 100).toFixed(2)}%`
+                                : "—"}
                             </td>
                             {!readOnly && (
                               <td className="px-3 py-2 text-right">
