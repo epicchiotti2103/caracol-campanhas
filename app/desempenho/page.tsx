@@ -408,7 +408,7 @@ function BigNumbers({
         }
       />
       <KpiCard
-        label="Gasto total do mes"
+        label="A faturar no mes"
         value={
           summary?.spend_total != null
             ? formatCurrency(summary.spend_total, "BRL")
