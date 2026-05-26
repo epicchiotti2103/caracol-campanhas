@@ -1,0 +1,823 @@
+"use client";
+
+// Modal de fechamento mensal de campanha (Etapa 3 do eixo financeiro).
+// Backend (em prod): /api/v1/campanhas/{id}/fechamento + /api/v1/campanhas/fechamento/*
+//
+// Fluxo:
+// 1) Ao abrir, GET /campanhas/{id}/fechamento?month=YYYY-MM — backend retorna
+//    fechamento persistido OU stub pre-populado (id=null) com publishers vindos
+//    do AppsFlyer summary do mes. Front trata os 2 com o mesmo render.
+// 2) User edita cliente, spend_final, publishers e salva (POST upsert).
+// 3) Locked: read-only. Botao "Destravar" volta pra editavel.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  Loader2,
+  Lock,
+  Plus,
+  Trash2,
+  Unlock,
+  X
+} from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { useToast } from "@/lib/toast-context";
+import {
+  blurFormatNumberPtBr,
+  formatCurrency,
+  formatMesAnoLong,
+  moedaShort,
+  parseNumberPtBr,
+  sanitizeNumberInput
+} from "@/lib/format";
+import type {
+  Client,
+  Fechamento,
+  FechamentoPublisher,
+  FechamentoUpsertPayload
+} from "@/types";
+
+interface Props {
+  campanhaId: string;
+  campanhaNome: string;
+  /** "YYYY-MM" do mes que esta sendo fechado. */
+  month: string;
+  /** Moeda da campanha (BRL/USD). */
+  moeda: string | null | undefined;
+  onClose: () => void;
+  /** Chamado depois de qualquer mutacao bem sucedida (upsert/lock/unlock). */
+  onSaved?: (fechamento: Fechamento) => void;
+}
+
+// Linha editavel — espelha FechamentoPublisher mas com spend_final como string
+// pra preservar o digitado pelo user (mascara PT-BR).
+interface PublisherRow {
+  id?: string | null;
+  publisher_name: string;
+  platform: string;
+  spend_real_display: string; // read-only
+  spend_real_raw: number | null;
+  spend_final_input: string; // mascara PT-BR
+  installs_or_conversions: string; // string pra evitar coercao prematura
+  notes: string;
+}
+
+function toRow(p: FechamentoPublisher, moeda: string | null | undefined): PublisherRow {
+  return {
+    id: p.id ?? null,
+    publisher_name: p.publisher_name || "",
+    platform: p.platform || "consolidado",
+    spend_real_display:
+      p.spend_real != null ? formatCurrency(p.spend_real, moeda) : "—",
+    spend_real_raw: p.spend_real ?? null,
+    spend_final_input:
+      p.spend_final != null ? blurFormatNumberPtBr(String(p.spend_final), 2) : "",
+    installs_or_conversions:
+      p.installs_or_conversions != null
+        ? String(p.installs_or_conversions)
+        : "",
+    notes: p.notes || ""
+  };
+}
+
+export function CampanhaFechamentoModal({
+  campanhaId,
+  campanhaNome,
+  month,
+  moeda,
+  onClose,
+  onSaved
+}: Props) {
+  const toast = useToast();
+
+  const moedaPrefix = moedaShort(moeda);
+
+  // ----- Estado do fechamento -----
+  const [loading, setLoading] = useState(true);
+  const [fechamento, setFechamento] = useState<Fechamento | null>(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Form
+  const [clientId, setClientId] = useState("");
+  const [spendFinalInput, setSpendFinalInput] = useState("");
+  const [spendRealRaw, setSpendRealRaw] = useState<number | null>(null);
+  const [notes, setNotes] = useState("");
+  const [publishers, setPublishers] = useState<PublisherRow[]>([]);
+
+  // ----- Clientes (dropdown buscavel) -----
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientSearch, setClientSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [loadingClients, setLoadingClients] = useState(false);
+  const [clientsError, setClientsError] = useState("");
+
+  // ----- Load fechamento (stub ou real) -----
+  const loadFechamento = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const f = (await apiFetch(
+        `/campanhas/${campanhaId}/fechamento?month=${month}`
+      )) as Fechamento;
+      setFechamento(f);
+      setClientId(f.client_id || "");
+      setSpendFinalInput(
+        f.spend_final != null ? blurFormatNumberPtBr(String(f.spend_final), 2) : ""
+      );
+      // spend_real: quando e stub, backend NAO retorna spend_real no root, so nos publishers.
+      // Usamos a soma dos spend_real dos publishers como spend_real "consolidado" de referencia.
+      // Se a row e persistida (id != null), spend_real do root = soma dos publishers tb (melhor que nada).
+      const sumReal = (f.publishers || []).reduce(
+        (acc, p) => acc + (p.spend_real ?? 0),
+        0
+      );
+      setSpendRealRaw(sumReal > 0 ? sumReal : null);
+      setNotes(f.notes || "");
+      setPublishers((f.publishers || []).map((p) => toRow(p, f.moeda || moeda)));
+    } catch (err: any) {
+      setError(err?.message || "Falha ao carregar fechamento.");
+    } finally {
+      setLoading(false);
+    }
+  }, [campanhaId, month, moeda]);
+
+  useEffect(() => {
+    loadFechamento();
+  }, [loadFechamento]);
+
+  // ----- Carrega lista de clientes -----
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(clientSearch.trim()), 250);
+    return () => clearTimeout(t);
+  }, [clientSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingClients(true);
+      setClientsError("");
+      try {
+        const params = new URLSearchParams({ active: "true" });
+        if (debouncedSearch) params.set("q", debouncedSearch);
+        const res: { items: Client[] } | Client[] = await apiFetch(
+          `/clients?${params.toString()}`
+        );
+        const items = Array.isArray(res) ? res : res?.items || [];
+        if (!cancelled) setClients(items);
+      } catch (err: any) {
+        if (!cancelled) {
+          setClientsError(err?.message || "Falha ao carregar clientes.");
+        }
+      } finally {
+        if (!cancelled) setLoadingClients(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearch]);
+
+  // ----- Helpers -----
+  const isLocked = fechamento?.is_locked || fechamento?.locked || false;
+  const isStub = !fechamento?.id;
+  const readOnly = isLocked;
+
+  const spendFinalNumber = useMemo(() => {
+    const n = parseNumberPtBr(spendFinalInput);
+    return Number.isFinite(n) ? n : 0;
+  }, [spendFinalInput]);
+
+  const delta = useMemo(() => {
+    if (spendRealRaw == null || spendRealRaw === 0) return null;
+    const diff = spendFinalNumber - spendRealRaw;
+    const pct = (diff / spendRealRaw) * 100;
+    return { diff, pct };
+  }, [spendFinalNumber, spendRealRaw]);
+
+  const publishersSum = useMemo(() => {
+    return publishers.reduce((acc, p) => {
+      const n = parseNumberPtBr(p.spend_final_input);
+      return acc + (Number.isFinite(n) ? n : 0);
+    }, 0);
+  }, [publishers]);
+
+  const publishersMismatch = useMemo(() => {
+    if (publishers.length === 0) return false;
+    return Math.abs(publishersSum - spendFinalNumber) > 0.01;
+  }, [publishers.length, publishersSum, spendFinalNumber]);
+
+  // ----- Handlers de publishers -----
+  const updatePub = (idx: number, patch: Partial<PublisherRow>) => {
+    setPublishers((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  };
+  const addPub = () =>
+    setPublishers((prev) => [
+      ...prev,
+      {
+        id: null,
+        publisher_name: "",
+        platform: "consolidado",
+        spend_real_display: "—",
+        spend_real_raw: null,
+        spend_final_input: "",
+        installs_or_conversions: "",
+        notes: ""
+      }
+    ]);
+  const removePub = (idx: number) =>
+    setPublishers((prev) => prev.filter((_, i) => i !== idx));
+
+  // ----- Submit (upsert) -----
+  const handleSave = async () => {
+    setError("");
+    if (!clientId) {
+      setError("Selecione um cliente.");
+      return;
+    }
+    if (!Number.isFinite(spendFinalNumber) || spendFinalNumber < 0) {
+      setError("Spend final invalido.");
+      return;
+    }
+
+    const publishersPayload: FechamentoUpsertPayload["publishers"] = [];
+    for (const p of publishers) {
+      const name = p.publisher_name.trim();
+      if (!name) continue;
+      const spend = parseNumberPtBr(p.spend_final_input);
+      if (!Number.isFinite(spend) || spend < 0) {
+        setError(`Spend final invalido no publisher "${name}".`);
+        return;
+      }
+      const installsStr = p.installs_or_conversions.trim();
+      let installs: number | null = null;
+      if (installsStr) {
+        installs = Number(installsStr);
+        if (!Number.isFinite(installs) || installs < 0) {
+          setError(`Installs/Conv invalido no publisher "${name}".`);
+          return;
+        }
+      }
+      publishersPayload.push({
+        publisher_name: name,
+        platform: p.platform || null,
+        spend_final: spend,
+        installs_or_conversions: installs,
+        notes: p.notes.trim() || null
+      });
+    }
+
+    const payload: FechamentoUpsertPayload = {
+      client_id: clientId,
+      spend_final: spendFinalNumber,
+      notes: notes.trim() || null,
+      publishers: publishersPayload
+    };
+
+    setSaving(true);
+    try {
+      const saved = (await apiFetch(
+        `/campanhas/${campanhaId}/fechamento?month=${month}`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload)
+        }
+      )) as Fechamento;
+      toast.success("Fechamento salvo.");
+      setFechamento(saved);
+      onSaved?.(saved);
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || "Falha ao salvar fechamento.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ----- Lock / Unlock -----
+  const handleLock = async () => {
+    if (!fechamento?.id) return;
+    const reason = window.prompt(
+      "Motivo do travamento (opcional — NF emitida, etc):"
+    );
+    setSaving(true);
+    setError("");
+    try {
+      const saved = (await apiFetch(
+        `/campanhas/fechamento/${fechamento.id}/lock`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: reason || null })
+        }
+      )) as Fechamento;
+      toast.success("Fechamento travado.");
+      setFechamento(saved);
+      onSaved?.(saved);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao travar fechamento.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    if (!fechamento?.id) return;
+    if (
+      !window.confirm("Destravar fechamento? Isso libera edicao novamente.")
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const saved = (await apiFetch(
+        `/campanhas/fechamento/${fechamento.id}/unlock`,
+        { method: "POST" }
+      )) as Fechamento;
+      toast.success("Fechamento destravado.");
+      setFechamento(saved);
+      // Recarrega pra refazer o form a partir do novo estado.
+      setClientId(saved.client_id || "");
+      setSpendFinalInput(
+        saved.spend_final != null
+          ? blurFormatNumberPtBr(String(saved.spend_final), 2)
+          : ""
+      );
+      setNotes(saved.notes || "");
+      setPublishers(
+        (saved.publishers || []).map((p) => toRow(p, saved.moeda || moeda))
+      );
+      onSaved?.(saved);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao destravar fechamento.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls =
+    "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-primary/60 disabled:opacity-60";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-border bg-zinc-950 px-6 py-4">
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-orange-50">
+              Fechamento de {formatMesAnoLong(`${month}-01`) || month}
+            </p>
+            <p className="mt-0.5 truncate text-xs text-orange-100/60">
+              {campanhaNome}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <StatusBadge locked={isLocked} stub={isStub} />
+            <button
+              onClick={onClose}
+              className="text-orange-100/40 hover:text-orange-50"
+              aria-label="Fechar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="max-h-[70vh] overflow-y-auto px-6 py-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : error && !fechamento ? (
+            <ErrorBox text={error} />
+          ) : (
+            <div className="space-y-6">
+              {/* Section 1: Dados do fechamento */}
+              <section className="space-y-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-primary">
+                  Dados do fechamento
+                </h3>
+
+                {/* Cliente */}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">
+                    Cliente <span className="text-primary">*</span>
+                  </label>
+                  {!readOnly && (
+                    <input
+                      type="text"
+                      value={clientSearch}
+                      onChange={(e) => setClientSearch(e.target.value)}
+                      placeholder="Buscar cliente por nome..."
+                      className={inputCls + " mb-2"}
+                      aria-label="Buscar cliente"
+                    />
+                  )}
+                  <select
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    disabled={readOnly || loadingClients}
+                    className={inputCls}
+                  >
+                    <option value="">
+                      {loadingClients ? "Carregando..." : "Selecione um cliente"}
+                    </option>
+                    {/* Garante que o cliente atual aparece mesmo se nao bate com busca */}
+                    {clientId &&
+                      !clients.find((c) => c.id === clientId) &&
+                      fechamento?.client_name && (
+                        <option value={clientId}>
+                          {fechamento.client_name} (atual)
+                        </option>
+                      )}
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {c.tax_id ? ` — ${c.tax_id}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {clientsError && (
+                    <p className="mt-1 text-xs text-danger">{clientsError}</p>
+                  )}
+                </div>
+
+                {/* Spend final + spend real + moeda */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-foreground">
+                      Spend final (cliente paga){" "}
+                      <span className="text-primary">*</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted">{moedaPrefix}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={spendFinalInput}
+                        onChange={(e) =>
+                          setSpendFinalInput(sanitizeNumberInput(e.target.value))
+                        }
+                        onBlur={(e) =>
+                          setSpendFinalInput(blurFormatNumberPtBr(e.target.value))
+                        }
+                        disabled={readOnly}
+                        placeholder="0,00"
+                        className={inputCls + " flex-1"}
+                      />
+                    </div>
+                    <div className="mt-1.5 space-y-0.5 text-xs">
+                      <p className="text-muted">
+                        Real do AppsFlyer:{" "}
+                        <span className="font-mono text-foreground">
+                          {spendRealRaw != null
+                            ? formatCurrency(spendRealRaw, moeda)
+                            : "—"}
+                        </span>
+                      </p>
+                      {delta && (
+                        <p
+                          className={`font-mono ${
+                            delta.diff < 0 ? "text-danger" : "text-emerald-300"
+                          }`}
+                        >
+                          Diferenca: {delta.diff >= 0 ? "+" : ""}
+                          {formatCurrency(delta.diff, moeda)} (
+                          {delta.pct >= 0 ? "+" : ""}
+                          {delta.pct.toFixed(1)}%)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-foreground">
+                      Moeda
+                    </label>
+                    <input
+                      type="text"
+                      value={fechamento?.moeda || moeda || "BRL"}
+                      disabled
+                      className={inputCls}
+                    />
+                    <p className="mt-1 text-xs text-muted">
+                      Moeda da campanha (read-only).
+                    </p>
+                  </div>
+                </div>
+
+                {/* Notas */}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">
+                    Notas internas
+                  </label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    rows={2}
+                    disabled={readOnly}
+                    placeholder="Observacoes (opcional)"
+                    className={inputCls + " resize-y"}
+                  />
+                  {isLocked && fechamento?.locked_at && (
+                    <p className="mt-1.5 text-xs text-amber-300">
+                      Travado em {fmtDateTime(fechamento.locked_at)}.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              {/* Section 2: Publishers */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-primary">
+                    Publishers
+                  </h3>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={addPub}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Adicionar publisher
+                    </button>
+                  )}
+                </div>
+
+                {publishers.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border bg-background p-6 text-center text-sm text-muted">
+                    Nenhum publisher. Adicione manualmente se quiser detalhar o
+                    repasse por canal.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-background/40">
+                          <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                            Publisher
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                            Platform
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                            Spend real
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                            Spend final {moedaPrefix}
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                            Installs/Conv
+                          </th>
+                          {!readOnly && (
+                            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                              {""}
+                            </th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {publishers.map((p, idx) => (
+                          <tr
+                            key={p.id || `new-${idx}`}
+                            className={
+                              idx < publishers.length - 1
+                                ? "border-b border-border"
+                                : ""
+                            }
+                          >
+                            <td className="px-3 py-2">
+                              <input
+                                type="text"
+                                value={p.publisher_name}
+                                onChange={(e) =>
+                                  updatePub(idx, {
+                                    publisher_name: e.target.value
+                                  })
+                                }
+                                disabled={readOnly}
+                                placeholder="Ex: googleadwords_int"
+                                className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <select
+                                value={p.platform}
+                                onChange={(e) =>
+                                  updatePub(idx, { platform: e.target.value })
+                                }
+                                disabled={readOnly}
+                                className="rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-muted outline-none focus:border-primary/40 disabled:opacity-60"
+                              >
+                                <option value="consolidado">consolidado</option>
+                                <option value="android">android</option>
+                                <option value="ios">ios</option>
+                              </select>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-xs text-muted">
+                              {p.spend_real_display}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={p.spend_final_input}
+                                onChange={(e) =>
+                                  updatePub(idx, {
+                                    spend_final_input: sanitizeNumberInput(
+                                      e.target.value
+                                    )
+                                  })
+                                }
+                                onBlur={(e) =>
+                                  updatePub(idx, {
+                                    spend_final_input: blurFormatNumberPtBr(
+                                      e.target.value
+                                    )
+                                  })
+                                }
+                                disabled={readOnly}
+                                placeholder="0,00"
+                                className="w-32 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min="0"
+                                value={p.installs_or_conversions}
+                                onChange={(e) =>
+                                  updatePub(idx, {
+                                    installs_or_conversions: e.target.value
+                                  })
+                                }
+                                disabled={readOnly}
+                                placeholder="0"
+                                className="w-24 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
+                              />
+                            </td>
+                            {!readOnly && (
+                              <td className="px-3 py-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => removePub(idx)}
+                                  className="text-muted transition-colors hover:text-danger"
+                                  aria-label="Remover publisher"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-border bg-background/40">
+                          <td
+                            className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
+                            colSpan={3}
+                          >
+                            Soma
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-sm text-foreground">
+                            {formatCurrency(publishersSum, moeda)}
+                          </td>
+                          <td className="px-3 py-2" colSpan={readOnly ? 1 : 2} />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+
+                {publishersMismatch && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+                    <p className="text-xs text-amber-200">
+                      A soma dos publishers (
+                      {formatCurrency(publishersSum, moeda)}) e diferente do
+                      spend final da campanha (
+                      {formatCurrency(spendFinalNumber, moeda)}). Ajuste se for
+                      o caso — nao bloqueia o salvamento.
+                    </p>
+                  </div>
+                )}
+              </section>
+
+              {error && fechamento && <ErrorBox text={error} />}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            {readOnly ? "Fechar" : "Cancelar"}
+          </button>
+
+          {/* Lock: aparece quando existe (id != null) e nao locked */}
+          {fechamento?.id && !isLocked && (
+            <button
+              type="button"
+              onClick={handleLock}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
+            >
+              <Lock className="h-4 w-4" />
+              Travar fechamento
+            </button>
+          )}
+
+          {/* Unlock: aparece quando locked */}
+          {fechamento?.id && isLocked && (
+            <button
+              type="button"
+              onClick={handleUnlock}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-surface disabled:opacity-50"
+            >
+              <Unlock className="h-4 w-4" />
+              Destravar
+            </button>
+          )}
+
+          {/* Save: oculto quando locked */}
+          {!isLocked && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || loading}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {saving ? "Salvando..." : "Salvar fechamento"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ locked, stub }: { locked: boolean; stub: boolean }) {
+  if (locked) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-emerald-300">
+        <Lock className="h-3 w-3" />
+        Travado
+      </span>
+    );
+  }
+  if (stub) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-zinc-500/30 bg-zinc-500/10 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-zinc-300">
+        Aberto
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-amber-300">
+      Fechado
+    </span>
+  );
+}
+
+function ErrorBox({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-danger/20 bg-danger/10 p-3">
+      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+      <p className="text-sm text-danger">{text}</p>
+    </div>
+  );
+}
+
+function fmtDateTime(s: string | null | undefined): string {
+  if (!s) return "";
+  try {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return s;
+  }
+}

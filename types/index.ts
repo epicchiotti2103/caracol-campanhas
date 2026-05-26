@@ -196,3 +196,82 @@ export interface CampanhaDashboardSummary {
 export interface CampanhaMonthsAvailable {
   months: string[]; // ["YYYY-MM", ...] desc
 }
+
+// ---- Cliente (entidade cadastral — mesmo shape do NF/Tracker) ----
+// Backend: /api/v1/clients (vem do tracker-caracol).
+export type ClientEntity = "BR" | "LLC";
+
+export interface Client {
+  id: string;
+  name: string;
+  tax_id?: string | null;
+  default_entity?: ClientEntity;
+  default_moeda?: Moeda;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  notes?: string | null;
+  active?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+// ---- Etapa 3: Fechamento mensal de campanha ----
+// Backend: tracker-caracol/backend/app/models/campanhas_fechamento.py
+// + routes/campanhas_fechamento.py (6 endpoints sob /api/v1/campanhas/fechamento/*).
+
+export interface FechamentoPublisher {
+  id?: string | null;
+  publisher_name: string;
+  platform?: string | null;
+  spend_final: number;
+  installs_or_conversions?: number | null;
+  notes?: string | null;
+  locked?: boolean;
+  locked_at?: string | null;
+  locked_invoice_id?: string | null;
+  // Derivado quando vem do stub pre-pop (spend real do AppsFlyer no mes).
+  spend_real?: number | null;
+}
+
+export interface Fechamento {
+  id: string | null; // null = stub (nao persistido ainda)
+  campanha_id: string;
+  client_id: string | null;
+  client_name?: string | null;
+  mes_referencia: string; // ISO YYYY-MM-DD
+  spend_final: number;
+  moeda: string;
+  closed_at?: string | null;
+  closed_by?: string | null;
+  locked: boolean;
+  locked_at?: string | null;
+  notes?: string | null;
+  updated_at?: string | null;
+  is_locked: boolean;
+  publishers: FechamentoPublisher[];
+}
+
+/** Body do POST /campanhas/{id}/fechamento?month=YYYY-MM. */
+export interface FechamentoUpsertPayload {
+  client_id: string;
+  spend_final: number;
+  notes?: string | null;
+  publishers: Array<{
+    publisher_name: string;
+    platform?: string | null;
+    spend_final: number;
+    installs_or_conversions?: number | null;
+    notes?: string | null;
+  }>;
+}
+
+/** Response do GET /campanhas/fechamento/summary?month=YYYY-MM. */
+export interface FechamentoSummary {
+  month: string;
+  campanhas_total: number;
+  fechamentos_count: number;
+  fechamentos_locked: number;
+  spend_final_total_brl: number;
+  spend_final_total_usd: number;
+  by_moeda: Record<string, number>;
+}

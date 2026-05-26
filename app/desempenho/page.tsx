@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
+import { CampanhaFechamentoModal } from "@/components/campanha-fechamento-modal";
 import { apiFetch } from "@/lib/api";
 import {
   currentMonthString,
@@ -45,6 +46,8 @@ import type {
   CampanhaMonthsAvailable,
   CampanhaStatus,
   CampanhaTipo,
+  Fechamento,
+  FechamentoSummary,
   MetricPlatform,
   Moeda
 } from "@/types";
@@ -78,6 +81,15 @@ interface CampanhaSummary {
   row: CampanhaMetricsRow | null;
   reportDate: string | null;
   noData: boolean;
+  fechamento: Fechamento | null;
+}
+
+type FechamentoStatus = "aberto" | "fechado" | "travado";
+
+function fechamentoStatusOf(f: Fechamento | null | undefined): FechamentoStatus {
+  if (!f || !f.id) return "aberto";
+  if (f.is_locked || f.locked) return "travado";
+  return "fechado";
 }
 
 export default function DesempenhoDashboardPage() {
@@ -103,6 +115,8 @@ function DesempenhoDashboard() {
 
   const [summaries, setSummaries] = useState<CampanhaSummary[]>([]);
   const [summary, setSummary] = useState<CampanhaDashboardSummary | null>(null);
+  const [fechSummary, setFechSummary] = useState<FechamentoSummary | null>(null);
+  const [modalCampanha, setModalCampanha] = useState<Campanha | null>(null);
   const [months, setMonths] = useState<string[]>([]);
   const [month, setMonth] = useState<string>(
     monthFromUrl || currentMonthString()
@@ -145,10 +159,13 @@ function DesempenhoDashboard() {
     setError("");
     try {
       const monthQuery = selectedMonth ? `?month=${selectedMonth}` : "";
-      const [listRes, summaryRes] = await Promise.all([
+      const [listRes, summaryRes, fechSummaryRes] = await Promise.all([
         apiFetch(`/campanhas${monthQuery}`),
         apiFetch(
           `/campanhas/dashboard/summary${monthQuery}`
+        ).catch(() => null),
+        apiFetch(
+          `/campanhas/fechamento/summary${monthQuery}`
         ).catch(() => null)
       ]);
       const campanhas: Campanha[] = Array.isArray(listRes)
@@ -156,25 +173,54 @@ function DesempenhoDashboard() {
         : listRes?.items || [];
 
       setSummary(summaryRes as CampanhaDashboardSummary | null);
+      setFechSummary(fechSummaryRes as FechamentoSummary | null);
 
-      const results = await Promise.allSettled(
-        campanhas.map((c) =>
-          apiFetch(`/campanhas/${c.id}/metrics/latest`).then(
-            (m) => m as CampanhaMetricsLatest
+      // Metrics latest + fechamento (em paralelo por campanha)
+      const [metricsResults, fechResults] = await Promise.all([
+        Promise.allSettled(
+          campanhas.map((c) =>
+            apiFetch(`/campanhas/${c.id}/metrics/latest`).then(
+              (m) => m as CampanhaMetricsLatest
+            )
           )
+        ),
+        Promise.allSettled(
+          campanhas.map((c) => {
+            const mes = selectedMonth || "";
+            if (!mes) return Promise.resolve(null as Fechamento | null);
+            return apiFetch(
+              `/campanhas/${c.id}/fechamento?month=${mes}`
+            ).then((f) => f as Fechamento);
+          })
         )
-      );
+      ]);
 
       const next: CampanhaSummary[] = campanhas.map((campanha, i) => {
-        const r = results[i];
+        const r = metricsResults[i];
+        const f = fechResults[i];
+        const fechamento =
+          f.status === "fulfilled" ? (f.value as Fechamento | null) : null;
+
         if (r.status === "rejected") {
-          return { campanha, row: null, reportDate: null, noData: true };
+          return {
+            campanha,
+            row: null,
+            reportDate: null,
+            noData: true,
+            fechamento
+          };
         }
         const latest = r.value;
         const platforms = latest?.platforms || {};
         const keys = Object.keys(platforms) as MetricPlatform[];
         if (keys.length === 0 || !latest?.report_date) {
-          return { campanha, row: null, reportDate: null, noData: true };
+          return {
+            campanha,
+            row: null,
+            reportDate: null,
+            noData: true,
+            fechamento
+          };
         }
         let row: CampanhaMetricsRow | null = null;
         for (const p of PLATFORM_PRIORITY) {
@@ -191,7 +237,8 @@ function DesempenhoDashboard() {
           campanha,
           row,
           reportDate: latest.report_date,
-          noData: row == null
+          noData: row == null,
+          fechamento
         };
       });
 
@@ -203,6 +250,7 @@ function DesempenhoDashboard() {
       }
       setSummaries([]);
       setSummary(null);
+      setFechSummary(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -308,7 +356,11 @@ function DesempenhoDashboard() {
         </div>
       )}
 
-      <BigNumbers summary={summary} loading={loading} />
+      <BigNumbers
+        summary={summary}
+        fechSummary={fechSummary}
+        loading={loading}
+      />
 
       <div className="rounded-xl border border-border bg-surface">
         <FiltersBar
@@ -340,6 +392,7 @@ function DesempenhoDashboard() {
                     "Tipo",
                     "Status",
                     "Gasto / Budget",
+                    "Fechamento",
                     "% MTD",
                     "Pace",
                     "P360 Evt",
@@ -362,6 +415,7 @@ function DesempenhoDashboard() {
                     key={s.campanha.id}
                     summary={s}
                     isLast={i === filtered.length - 1}
+                    onOpenFechamento={() => setModalCampanha(s.campanha)}
                   />
                 ))}
               </tbody>
@@ -378,15 +432,31 @@ function DesempenhoDashboard() {
           </div>
         )}
       </div>
+
+      {modalCampanha && (
+        <CampanhaFechamentoModal
+          campanhaId={modalCampanha.id}
+          campanhaNome={modalCampanha.name}
+          month={month}
+          moeda={modalCampanha.moeda}
+          onClose={() => setModalCampanha(null)}
+          onSaved={() => {
+            // Recarrega o dashboard apos qualquer mutacao
+            loadAll(month, { silent: true });
+          }}
+        />
+      )}
     </div>
   );
 }
 
 function BigNumbers({
   summary,
+  fechSummary,
   loading
 }: {
   summary: CampanhaDashboardSummary | null;
+  fechSummary: FechamentoSummary | null;
   loading: boolean;
 }) {
   const budgetUsedPct = summary?.budget_used_pct
@@ -395,8 +465,15 @@ function BigNumbers({
 
   const usedColor = pacePctColor(budgetUsedPct);
 
+  // Faturamento fechado: soma BRL+USD pra simplicidade (mostra so BRL formatado
+  // por enquanto — multi-moeda fica como ajuste futuro se ficar relevante).
+  const faturamentoFechado =
+    fechSummary != null
+      ? (fechSummary.spend_final_total_brl || 0)
+      : null;
+
   return (
-    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
       <KpiCard
         label="Budget total do mes"
         value={
@@ -429,6 +506,29 @@ function BigNumbers({
         valueClass={usedColor || undefined}
       />
       <KpiCard
+        label="Faturamento fechado"
+        value={
+          faturamentoFechado != null
+            ? formatCurrency(faturamentoFechado, "BRL")
+            : loading
+            ? "..."
+            : "—"
+        }
+        sublabel={
+          fechSummary
+            ? `${fechSummary.fechamentos_count}/${
+                fechSummary.campanhas_total
+              } fechado${fechSummary.fechamentos_count === 1 ? "" : "s"}${
+                fechSummary.fechamentos_locked > 0
+                  ? ` · ${fechSummary.fechamentos_locked} travado${
+                      fechSummary.fechamentos_locked === 1 ? "" : "s"
+                    }`
+                  : ""
+              }`
+            : undefined
+        }
+      />
+      <KpiCard
         label="Campanhas no mes"
         value={
           summary?.campanhas_count != null
@@ -447,12 +547,14 @@ function KpiCard({
   label,
   value,
   valueClass,
-  compact
+  compact,
+  sublabel
 }: {
   label: string;
   value: string;
   valueClass?: string;
   compact?: boolean;
+  sublabel?: string;
 }) {
   return (
     <article className="rounded-xl border border-border bg-surface p-5">
@@ -466,6 +568,9 @@ function KpiCard({
       >
         {value}
       </p>
+      {sublabel && (
+        <p className="mt-1 text-[11px] text-muted">{sublabel}</p>
+      )}
     </article>
   );
 }
@@ -553,12 +658,14 @@ function FilterGroup({
 
 function SummaryRow({
   summary,
-  isLast
+  isLast,
+  onOpenFechamento
 }: {
   summary: CampanhaSummary;
   isLast: boolean;
+  onOpenFechamento: () => void;
 }) {
-  const { campanha, row, reportDate, noData } = summary;
+  const { campanha, row, reportDate, noData, fechamento } = summary;
   const moeda: Moeda | string | null | undefined = campanha.moeda;
   const paceStatus = normalizePaceStatus(row?.pace_status);
   const spend = row?.spend_actual ?? null;
@@ -623,6 +730,12 @@ function SummaryRow({
             />
           </div>
         )}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4">
+        <FechamentoBadge
+          fechamento={fechamento}
+          onClick={onOpenFechamento}
+        />
       </td>
       <td className="whitespace-nowrap px-4 py-4">
         <span className={`font-mono text-sm ${pacePctColor(mtdPct)}`}>
@@ -728,5 +841,32 @@ function EmptyStateNoFilter() {
         Nenhuma campanha para os filtros atuais.
       </p>
     </div>
+  );
+}
+
+function FechamentoBadge({
+  fechamento,
+  onClick
+}: {
+  fechamento: Fechamento | null;
+  onClick: () => void;
+}) {
+  const status = fechamentoStatusOf(fechamento);
+  const cls =
+    status === "travado"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+      : status === "fechado"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+      : "border-zinc-500/30 bg-zinc-500/10 text-zinc-300 hover:bg-zinc-500/20";
+  const label =
+    status === "travado" ? "Travado" : status === "fechado" ? "Fechado" : "Aberto";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors ${cls}`}
+    >
+      {label}
+    </button>
   );
 }

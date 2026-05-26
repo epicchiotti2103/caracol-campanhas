@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
+import { CampanhaFechamentoModal } from "@/components/campanha-fechamento-modal";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import {
@@ -40,6 +41,7 @@ import type {
   CampanhaPublisherInput,
   CampanhaPublisherRow,
   CampanhaPublishersResponse,
+  Fechamento,
   MetricPlatform,
   Moeda
 } from "@/types";
@@ -67,6 +69,8 @@ function DesempenhoView() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
+  const [fechamentoOpen, setFechamentoOpen] = useState(false);
+  const [fechamento, setFechamento] = useState<Fechamento | null>(null);
 
   const loadAll = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -93,6 +97,20 @@ function DesempenhoView() {
       } catch {
         // Sem publishers ainda — render empty state na tabela
         setPublishers({ month: mesParam || null, report_date: null, rows: [] });
+      }
+
+      // Fechamento: pega status atual pra mostrar texto certo no botao.
+      // Backend retorna stub (id=null) se ainda nao foi salvo — tratamos como
+      // "Fechar mes" no botao.
+      if (mesParam) {
+        try {
+          const f = (await apiFetch(
+            `/campanhas/${id}/fechamento?month=${mesParam}`
+          )) as Fechamento;
+          setFechamento(f);
+        } catch {
+          setFechamento(null);
+        }
       }
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar desempenho.");
@@ -200,6 +218,10 @@ function DesempenhoView() {
                   Inserir metrics manualmente
                 </button>
               )}
+              <FechamentoButton
+                fechamento={fechamento}
+                onClick={() => setFechamentoOpen(true)}
+              />
               <button
                 onClick={() => loadAll({ silent: true })}
                 disabled={refreshing}
@@ -242,6 +264,19 @@ function DesempenhoView() {
               onSuccess={() => {
                 setManualOpen(false);
                 loadAll({ silent: true });
+              }}
+            />
+          )}
+
+          {fechamentoOpen && (
+            <CampanhaFechamentoModal
+              campanhaId={campanha.id}
+              campanhaNome={campanha.name}
+              month={toMonthString(campanha.mes_referencia) || ""}
+              moeda={campanha.moeda}
+              onClose={() => setFechamentoOpen(false)}
+              onSaved={(f) => {
+                setFechamento(f);
               }}
             />
           )}
@@ -1040,4 +1075,38 @@ function fmtDate(s: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   return s;
+}
+
+function FechamentoButton({
+  fechamento,
+  onClick
+}: {
+  fechamento: Fechamento | null;
+  onClick: () => void;
+}) {
+  const isPersisted = !!fechamento?.id;
+  const isLocked = !!(fechamento?.is_locked || fechamento?.locked);
+
+  let label = "Fechar mes";
+  let cls =
+    "border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20";
+  if (isLocked) {
+    label = "Ver fechamento (travado)";
+    cls =
+      "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20";
+  } else if (isPersisted) {
+    label = "Editar fechamento";
+    cls =
+      "border border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20";
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${cls}`}
+    >
+      {label}
+    </button>
+  );
 }
