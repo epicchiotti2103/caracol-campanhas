@@ -534,8 +534,6 @@ function PublishersSection({
 interface ManualPlatformRow {
   platform: MetricPlatform;
   spend_actual: string;
-  spend_pace_pct: string;
-  budget_used_pct: string;
 }
 
 interface ManualPublisherRow {
@@ -577,9 +575,7 @@ function ManualMetricsModal({
   const [platforms, setPlatforms] = useState<ManualPlatformRow[]>([
     {
       platform: "consolidado",
-      spend_actual: "",
-      spend_pace_pct: "",
-      budget_used_pct: ""
+      spend_actual: ""
     }
   ]);
   const [pubRows, setPubRows] = useState<ManualPublisherRow[]>([]);
@@ -594,9 +590,7 @@ function ManualMetricsModal({
       ...prev,
       {
         platform: "android",
-        spend_actual: "",
-        spend_pace_pct: "",
-        budget_used_pct: ""
+        spend_actual: ""
       }
     ]);
   };
@@ -639,21 +633,9 @@ function ManualMetricsModal({
         setError(`Spend invalido na plataforma ${row.platform}.`);
         return;
       }
-      const pacePct = row.spend_pace_pct.trim()
-        ? parseNumberPtBr(row.spend_pace_pct)
-        : null;
-      const budgetUsedPct = row.budget_used_pct.trim()
-        ? parseNumberPtBr(row.budget_used_pct)
-        : null;
       platformsPayload[row.platform] = {
         platform: row.platform,
-        spend_actual: spend,
-        spend_pace_pct:
-          pacePct != null && !Number.isNaN(pacePct) ? pacePct : null,
-        budget_used_pct:
-          budgetUsedPct != null && !Number.isNaN(budgetUsedPct)
-            ? budgetUsedPct
-            : null
+        spend_actual: spend
       };
     }
 
@@ -817,7 +799,7 @@ function ManualMetricsModal({
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-2">
                   <label className="block">
                     <span className="mb-1 block text-xs text-muted">
                       Spend ({moeda === "USD" ? "$" : "R$"})
@@ -837,50 +819,6 @@ function ManualMetricsModal({
                         })
                       }
                       placeholder="0,00"
-                      className={modalInputCls}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-muted">
-                      % MTD (opcional)
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={row.spend_pace_pct}
-                      onChange={(e) =>
-                        updatePlatform(idx, {
-                          spend_pace_pct: sanitizeNumberInput(e.target.value)
-                        })
-                      }
-                      onBlur={(e) =>
-                        updatePlatform(idx, {
-                          spend_pace_pct: blurFormatNumberPtBr(e.target.value)
-                        })
-                      }
-                      placeholder="0,0"
-                      className={modalInputCls}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-muted">
-                      % Budget usado (opcional)
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={row.budget_used_pct}
-                      onChange={(e) =>
-                        updatePlatform(idx, {
-                          budget_used_pct: sanitizeNumberInput(e.target.value)
-                        })
-                      }
-                      onBlur={(e) =>
-                        updatePlatform(idx, {
-                          budget_used_pct: blurFormatNumberPtBr(e.target.value)
-                        })
-                      }
-                      placeholder="0,0"
                       className={modalInputCls}
                     />
                   </label>
