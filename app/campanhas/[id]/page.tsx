@@ -253,6 +253,11 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
               {campanha.parceria_wave ? "Sim" : "Nao"}
             </p>
           </Field>
+          <Field label="Coleta de dados">
+            <p className="text-sm text-foreground">
+              {campanha.coleta_manual ? "Manual (nao buscar)" : "Automatica"}
+            </p>
+          </Field>
           <Field label="Timezone">
             <p className="text-sm text-foreground">
               {campanha.timezone || "—"}

@@ -142,7 +142,10 @@ function DesempenhoView() {
     }, [latest]);
 
   const hasData = (latest?.report_date && platformsOrdered.length > 0) || false;
-  const isAdjust = campanha?.mmp === "adjust";
+  // Input manual liberado pra Adjust OU campanha marcada coleta_manual
+  // (ex: parceiro AppsFlyer sem coleta automatica).
+  const canInputManual =
+    campanha?.mmp === "adjust" || !!campanha?.coleta_manual;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -208,7 +211,7 @@ function DesempenhoView() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {isAdjust && (
+              {canInputManual && (
                 <button
                   type="button"
                   onClick={() => setManualOpen(true)}
@@ -704,7 +707,7 @@ function ManualMetricsModal({
       <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-border bg-surface p-6 shadow-xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h3 className="text-lg font-semibold text-foreground">
-            Inserir metrics manualmente (Adjust)
+            Inserir metrics manualmente
           </h3>
           <button
             type="button"

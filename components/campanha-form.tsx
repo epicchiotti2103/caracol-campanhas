@@ -199,6 +199,12 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
     initial?.parceria_wave ?? false
   );
 
+  // Coleta manual: se sim, o robo api_af nao busca os dados (so input manual).
+  // Default NAO (busca automatica, comportamento padrao do appsflyer).
+  const [coletaManual, setColetaManual] = useState<boolean>(
+    initial?.coleta_manual ?? false
+  );
+
   // Eventos pagos — comeca com 1 linha vazia se nao tem nada
   const [eventos, setEventos] = useState<EventoRow[]>(
     initial?.eventos_pagos && initial.eventos_pagos.length > 0
@@ -427,6 +433,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       mes_referencia: mesRefIso,
       mmp,
       parceria_wave: parceriaWave,
+      coleta_manual: coletaManual,
       criativo: criativo.trim() || null,
       obs: obs.trim() || null,
       eventos_pagos: cleanEventos,
@@ -564,6 +571,30 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 onClick={() => setParceriaWave(opt.val)}
                 className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
                   parceriaWave === opt.val
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted hover:text-foreground"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field
+          label="Coleta de dados"
+          hint="Automatica: o robo api_af busca os dados (padrao). Manual: o robo NAO busca — voce insere os metrics na mao (ex: campanha de parceiro AppsFlyer sem acesso automatico)."
+        >
+          <div className="flex gap-2">
+            {([
+              { val: false, label: "Automatica" },
+              { val: true, label: "Manual (nao buscar)" }
+            ] as { val: boolean; label: string }[]).map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setColetaManual(opt.val)}
+                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  coletaManual === opt.val
                     ? "border-primary bg-primary/10 text-primary"
                     : "border-border bg-background text-muted hover:text-foreground"
                 }`}

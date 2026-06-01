@@ -88,6 +88,10 @@ export interface Campanha {
   // Parceria Wave (Wavesync): se true, entra no relatorio enviado pro parceiro.
   parceria_wave?: boolean | null;
 
+  // Coleta manual: se true, o robo api_af NAO busca os dados (so input manual),
+  // mesmo sendo mmp=appsflyer. Libera o form de metrics manual.
+  coleta_manual?: boolean | null;
+
   // Eventos pagos (backend usa esse nome). Moeda vem da campanha.
   eventos_pagos?: CampanhaEvento[];
 

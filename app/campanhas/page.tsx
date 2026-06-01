@@ -356,10 +356,12 @@ function CampanhaRow({
       <td className="whitespace-nowrap px-4 py-4">
         {campanha.parceria_wave ? (
           <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-            Wave
+            Sim
           </span>
         ) : (
-          <span className="text-xs text-muted">—</span>
+          <span className="rounded-md bg-background px-2 py-0.5 text-xs font-medium text-muted">
+            Nao
+          </span>
         )}
       </td>
       <td className="px-4 py-4">
