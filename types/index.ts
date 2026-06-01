@@ -85,6 +85,9 @@ export interface Campanha {
   mes_referencia: string; // ISO YYYY-MM-01
   mmp: CampanhaMMP;
 
+  // Parceria Wave (Wavesync): se true, entra no relatorio enviado pro parceiro.
+  parceria_wave?: boolean | null;
+
   // Eventos pagos (backend usa esse nome). Moeda vem da campanha.
   eventos_pagos?: CampanhaEvento[];
 

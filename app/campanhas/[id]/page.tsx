@@ -248,6 +248,11 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
                 : "—"}
             </p>
           </Field>
+          <Field label="Parceria Wave">
+            <p className="text-sm text-foreground">
+              {campanha.parceria_wave ? "Sim" : "Nao"}
+            </p>
+          </Field>
           <Field label="Timezone">
             <p className="text-sm text-foreground">
               {campanha.timezone || "—"}

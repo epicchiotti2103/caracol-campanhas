@@ -193,6 +193,12 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
     (initial?.mmp as CampanhaMMP) || "appsflyer"
   );
 
+  // Parceria Wave (Wavesync): se sim, entra no relatorio enviado pro parceiro.
+  // Default NAO (fail-safe: nada vaza sem marcar explicitamente).
+  const [parceriaWave, setParceriaWave] = useState<boolean>(
+    initial?.parceria_wave ?? false
+  );
+
   // Eventos pagos — comeca com 1 linha vazia se nao tem nada
   const [eventos, setEventos] = useState<EventoRow[]>(
     initial?.eventos_pagos && initial.eventos_pagos.length > 0
@@ -420,6 +426,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       external_id: externalId.trim() || null,
       mes_referencia: mesRefIso,
       mmp,
+      parceria_wave: parceriaWave,
       criativo: criativo.trim() || null,
       obs: obs.trim() || null,
       eventos_pagos: cleanEventos,
@@ -542,6 +549,30 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
             </div>
           </Field>
         </div>
+        <Field
+          label="Parceria Wave"
+          hint="Se SIM, esta campanha entra no relatorio AppsFlyer enviado pra Wavesync (seg/qua/sex). Default NAO."
+        >
+          <div className="flex gap-2">
+            {([
+              { val: false, label: "Nao" },
+              { val: true, label: "Sim" }
+            ] as { val: boolean; label: string }[]).map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setParceriaWave(opt.val)}
+                className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  parceriaWave === opt.val
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted hover:text-foreground"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </Field>
       </Section>
 
       <Section title="Tipo e budget">
