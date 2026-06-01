@@ -242,6 +242,7 @@ function CampanhasList() {
                   "Budget",
                   "Eventos",
                   "Status",
+                  "Wave",
                   ""
                 ].map((h, i) => (
                   <th
@@ -256,13 +257,13 @@ function CampanhasList() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={10} className="py-16 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={10} className="py-16 text-center">
                     <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
                     <p className="text-sm text-muted">
                       {campanhas.length === 0
@@ -351,6 +352,15 @@ function CampanhaRow({
       </td>
       <td className="whitespace-nowrap px-4 py-4">
         <StatusBadge status={campanha.status} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-4">
+        {campanha.parceria_wave ? (
+          <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            Wave
+          </span>
+        ) : (
+          <span className="text-xs text-muted">—</span>
+        )}
       </td>
       <td className="px-4 py-4">
         <Eye className="h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
