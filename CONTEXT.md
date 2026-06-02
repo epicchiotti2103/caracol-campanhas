@@ -104,6 +104,8 @@ create table campanhas_users (
 
 Quando NF migrar pra referenciar campanhas: adiciona `nf_invoices.campanha_id uuid references campanhas(id)` (opcional inicialmente, depois NOT NULL). Backfill com base no texto livre atual.
 
+> **Estado real (a tabela evoluiu muito alem dessa proposta).** `campanhas` ganhou: `codigo` (CMP-NNN via trigger), `inicio`/`fim`, `app`/`af_prt`/`plataforma`/`fluxo`/`criativo`/`obs`, `budget`/`moeda`, `tipo` (ua|rtg), `budget_mode` (total|per_event), `timezone`, `external_id`, `mes_referencia` (snapshot mensal — cada mes e 1 linha), `mmp` (appsflyer|adjust), **`parceria_wave`** (default false — relatorio Wavesync via `--only-wave` do api_af) e **`coleta_manual`** (default false — tira do `apps.yaml`/robo e libera input manual mesmo em appsflyer). Filhas: `campanhas_eventos_pagos`, `campanhas_apps`, `campanhas_media_sources`, `campanhas_metrics_daily`, `campanhas_metrics_publishers_daily`, `campanhas_fechamento_mensal`, `campanhas_fechamento_publishers`. Migrations no `tracker-caracol/backend/migrations/` (campanhas: 015-024, 027, 029, 030).
+
 ## Auth e SSO
 
 Mesmo cookie no dominio raiz `.aeobr.com.br` (igual Hub, NF, Tracker). Em producao, login feito em qualquer app da suite vale aqui. Em dev (`localhost`), sem cross-subdomain.
@@ -158,6 +160,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=(painel Supabase)
 6. **Sem `BootstrapGate` na fase 0** — auth simples via cookie + middleware basta enquanto o backend nao expoe `/hub/me/apps` com slug `campanhas`. Adicionar na fase 2.
 
 7. **Tema/branding identico ao NF** — mesmas variaveis HSL em `app/globals.css`, mesma logo Caracol clicavel pro Hub. So muda title/description e copy.
+
+8. **Parceria Wave + coleta manual** (01/06) — `parceria_wave` controla quais campanhas entram no relatorio do api_af enviado pro parceiro Wavesync (filtro `--only-wave` no `daily_runner`, default Nao = fail-safe, nao vaza). `coleta_manual` tira a campanha do `apps.yaml` (robo nao busca) e libera o form "Inserir metrics manualmente" mesmo em `mmp=appsflyer`. Os flags moram no backend (`campanhas.parceria_wave`/`coleta_manual`), o front so consome. O auto-calculo de `%MTD`/`%budget` no metrics manual e feito no backend (espelha `api_af/src/analysis/pace.py`).
 
 ## Como editar
 
