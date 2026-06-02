@@ -47,13 +47,14 @@ caracol-campanhas/
       page.tsx                   Dashboard cross-campanha (KPIs consolidados de TODAS)
   components/
     app-shell.tsx                Layout com navbar
-    bootstrap-gate.tsx           Gate de acesso via /hub/me/apps
+    bootstrap-gate.tsx           Gate de acesso via /hub/me/apps (nao bloqueia o shell — checa em background; so toma a tela em no-app/error)
     campanha-form.tsx            Form unico usado em new e edicao inline
     navbar.tsx                   Navbar com logo do Hub e nav de campanhas
     status-badge.tsx             Badge de status da campanha
   lib/
-    api.ts                       fetch helper com Bearer + refresh automatico
+    api.ts                       fetch helper com Bearer + refresh automatico (REPLICADO nos N apps — nao editar)
     auth-context.tsx             Sessao + SSO (REPLICADO nos N apps)
+    cache.ts                     Cache/dedupe LOCAL por cima do apiFetch (cachedFetch/invalidateCache) — perf de boot
     config.ts                    API_BASE_URL, HUB_URL
     format.ts                    formatCurrency + mascara PT-BR (virgula decimal)
     pace.ts                      Helpers de cor/badge pro pace_status + taxas de fraude

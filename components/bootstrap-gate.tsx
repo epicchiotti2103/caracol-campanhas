@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { apiFetch } from "@/lib/api";
+import { cachedFetch } from "@/lib/cache";
 import { HUB_URL } from "@/lib/config";
 
 type HubApp = {
@@ -61,7 +61,9 @@ export function BootstrapGate({ children }: { children: React.ReactNode }) {
     setState({ status: "checking" });
     (async () => {
       try {
-        const res: HubApp[] = await apiFetch("/hub/me/apps");
+        const res: HubApp[] = await cachedFetch("/hub/me/apps", {
+          ttlMs: 5 * 60_000
+        });
         const apps = Array.isArray(res) ? res : [];
         appsCache = { userId: user.id, apps };
         if (cancelled) return;
@@ -89,12 +91,12 @@ export function BootstrapGate({ children }: { children: React.ReactNode }) {
 
   if (skipGate) return <>{children}</>;
 
-  if (state.status === "checking" || state.status === "idle") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
-    );
+  // Perf: enquanto o check de acesso roda (checking/idle), NAO bloqueamos a
+  // tela inteira com spinner. Renderizamos o shell + conteudo imediatamente —
+  // cada pagina ja tem seu proprio loader na area de dados. O gate so assume a
+  // tela em estados terminais (no-app -> redirect pro Hub, error -> retry).
+  if (state.status === "ok" || state.status === "checking" || state.status === "idle") {
+    return <>{children}</>;
   }
 
   if (state.status === "no-app") {

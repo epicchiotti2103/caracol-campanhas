@@ -102,4 +102,5 @@ Copiados do NF/Tracker — quando a duplicacao virar dor real, vale extrair pra 
 - `lib/config.ts`
 - `lib/format.ts` (`formatCurrency` + helpers PT-BR `formatNumberPtBr`/`parseNumberPtBr`/`blurFormatNumberPtBr`/`sanitizeNumberInput` usados nos inputs monetarios pra aceitar virgula)
 - `lib/pace.ts` (helpers de cor/badge pro `pace_status` e taxas de fraude — usado pelas duas telas de desempenho)
+- `lib/cache.ts` (**proprio do Campanhas**, nao replicado): `cachedFetch`/`invalidateCache` — camada de cache+dedupe LOCAL por cima do `apiFetch` (sem tocar no `apiFetch` compartilhado). Dedupa GETs in-flight iguais e cacheia por TTL em memoria de sessao; `months_available` usa TTL longo. Usado no boot pra cortar requests repetidas (`/hub/me/apps`, `months_available`, lista).
 - `components/app-shell.tsx`, `components/navbar.tsx`, `components/status-badge.tsx`

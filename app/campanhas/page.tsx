@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
-import { apiFetch } from "@/lib/api";
+import { cachedFetch, MONTHS_AVAILABLE_TTL_MS } from "@/lib/cache";
 import {
   currentMonthString,
   formatCurrency,
@@ -72,8 +72,9 @@ function CampanhasList() {
   useEffect(() => {
     (async () => {
       try {
-        const res: CampanhaMonthsAvailable = await apiFetch(
-          "/campanhas?months_available=1"
+        const res: CampanhaMonthsAvailable = await cachedFetch(
+          "/campanhas?months_available=1",
+          { ttlMs: MONTHS_AVAILABLE_TTL_MS }
         );
         const list = res?.months || [];
         setMonths(list);
@@ -92,13 +93,14 @@ function CampanhasList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const load = async (selectedMonth: string) => {
+  const load = async (selectedMonth: string, force = false) => {
     setLoading(true);
     setError("");
     try {
       const query = selectedMonth ? `?month=${selectedMonth}` : "";
-      const res: { items: Campanha[] } | Campanha[] = await apiFetch(
-        `/campanhas${query}`
+      const res: { items: Campanha[] } | Campanha[] = await cachedFetch(
+        `/campanhas${query}`,
+        { ttlMs: 30_000, force }
       );
       const items = Array.isArray(res) ? res : res?.items || [];
       setCampanhas(items);
@@ -160,7 +162,7 @@ function CampanhasList() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => load(month)}
+            onClick={() => load(month, true)}
             disabled={loading}
             className="rounded-lg border border-border bg-surface p-2 text-muted transition-colors hover:bg-surface/80 disabled:opacity-50"
             title="Atualizar"
