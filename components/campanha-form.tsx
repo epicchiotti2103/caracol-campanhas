@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, AlertCircle, Plus, Trash2 } from "lucide-react";
@@ -19,11 +19,10 @@ import type {
   CampanhaApp,
   CampanhaBudgetMode,
   CampanhaEvento,
-  CampanhaMediaSource,
   CampanhaMMP,
+  CampanhaPublisher,
   CampanhaStatus,
   CampanhaTipo,
-  MediaSourceCampaignType,
   Moeda
 } from "@/types";
 
@@ -68,7 +67,6 @@ interface CampanhaFormProps {
 
 interface EventoRow {
   nome: string;
-  payout: string;
   target_cpa: string;
   budget_monthly: string;
 }
@@ -81,11 +79,16 @@ interface AppRow {
   only_primary_attribution: boolean;
 }
 
-interface MediaSourceRow {
-  name: string;
-  campaign_type: MediaSourceCampaignType;
-  target_cpi: string;
-  min_installs_to_evaluate: string;
+// PO por evento dentro de um publisher: keyado por evento_nome (string).
+interface PublisherPayoutRow {
+  evento_nome: string;
+  payout: string; // mascara PT-BR
+}
+
+interface PublisherRow {
+  nome: string;
+  media_sources: string[]; // lista dinamica de strings
+  payouts: PublisherPayoutRow[];
 }
 
 function toDateInput(s: string | null | undefined): string {
@@ -100,10 +103,23 @@ function normalizeMoeda(m: string | null | undefined): Moeda {
 function eventoToRow(e: CampanhaEvento): EventoRow {
   return {
     nome: e.nome ?? "",
-    payout: e.payout != null ? formatNumberPtBr(e.payout) : "",
     target_cpa: e.target_cpa != null ? formatNumberPtBr(e.target_cpa) : "",
     budget_monthly:
       e.budget_monthly != null ? formatNumberPtBr(e.budget_monthly) : ""
+  };
+}
+
+function publisherToRow(p: CampanhaPublisher): PublisherRow {
+  return {
+    nome: p.nome ?? "",
+    media_sources:
+      Array.isArray(p.media_sources) && p.media_sources.length > 0
+        ? [...p.media_sources]
+        : [""],
+    payouts: (p.payouts ?? []).map((po) => ({
+      evento_nome: po.evento_nome ?? "",
+      payout: po.payout != null ? formatNumberPtBr(po.payout) : ""
+    }))
   };
 }
 
@@ -114,18 +130,6 @@ function appToRow(a: CampanhaApp): AppRow {
     platform: a.platform ?? "android",
     p360_enabled: !!a.p360_enabled,
     only_primary_attribution: a.only_primary_attribution !== false
-  };
-}
-
-function mediaSourceToRow(m: CampanhaMediaSource): MediaSourceRow {
-  return {
-    name: m.name ?? "",
-    campaign_type: m.campaign_type ?? "cpa",
-    target_cpi: m.target_cpi != null ? formatNumberPtBr(m.target_cpi) : "",
-    min_installs_to_evaluate:
-      m.min_installs_to_evaluate != null
-        ? String(m.min_installs_to_evaluate)
-        : "30"
   };
 }
 
@@ -209,7 +213,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const [eventos, setEventos] = useState<EventoRow[]>(
     initial?.eventos_pagos && initial.eventos_pagos.length > 0
       ? initial.eventos_pagos.map(eventoToRow)
-      : [{ nome: "", payout: "", target_cpa: "", budget_monthly: "" }]
+      : [{ nome: "", target_cpa: "", budget_monthly: "" }]
   );
 
   // Apps (api_af) — comeca vazio (nao obrigatorio)
@@ -217,10 +221,10 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
     initial?.apps && initial.apps.length > 0 ? initial.apps.map(appToRow) : []
   );
 
-  // Media sources — comeca vazio
-  const [mediaSources, setMediaSources] = useState<MediaSourceRow[]>(
-    initial?.media_sources && initial.media_sources.length > 0
-      ? initial.media_sources.map(mediaSourceToRow)
+  // Publishers — comeca vazio. Cada publisher tem media sources + PO por evento.
+  const [publishers, setPublishers] = useState<PublisherRow[]>(
+    initial?.publishers && initial.publishers.length > 0
+      ? initial.publishers.map(publisherToRow)
       : []
   );
 
@@ -240,13 +244,54 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const addEvento = () =>
     setEventos((prev) => [
       ...prev,
-      { nome: "", payout: "", target_cpa: "", budget_monthly: "" }
+      { nome: "", target_cpa: "", budget_monthly: "" }
     ]);
   const removeEvento = (idx: number) => {
     setEventos((prev) =>
       prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
     );
   };
+
+  // Nomes de eventos atuais (nao vazios, unicos por trim) — base pra reconciliar
+  // os payouts dos publishers quando o user muda os eventos.
+  const eventoNomes = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const ev of eventos) {
+      const n = ev.nome.trim();
+      if (n && !seen.has(n)) {
+        seen.add(n);
+        out.push(n);
+      }
+    }
+    return out;
+  }, [eventos]);
+
+  // Reconcilia os payouts de cada publisher contra os eventos atuais:
+  // mantem o payout dos eventos que casam por nome, descarta os orfaos,
+  // e garante 1 linha por evento atual (na ordem dos eventos).
+  useEffect(() => {
+    setPublishers((prev) =>
+      prev.map((pub) => {
+        const byNome = new Map(
+          pub.payouts.map((po) => [po.evento_nome, po.payout])
+        );
+        const next: PublisherPayoutRow[] = eventoNomes.map((nome) => ({
+          evento_nome: nome,
+          payout: byNome.get(nome) ?? ""
+        }));
+        // Evita re-render se nada mudou (mesma sequencia de nomes + payouts).
+        const same =
+          next.length === pub.payouts.length &&
+          next.every(
+            (po, i) =>
+              po.evento_nome === pub.payouts[i]?.evento_nome &&
+              po.payout === pub.payouts[i]?.payout
+          );
+        return same ? pub : { ...pub, payouts: next };
+      })
+    );
+  }, [eventoNomes]);
 
   // ---- helpers apps ----
   const updateApp = (idx: number, patch: Partial<AppRow>) => {
@@ -268,24 +313,84 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const removeApp = (idx: number) =>
     setApps((prev) => prev.filter((_, i) => i !== idx));
 
-  // ---- helpers media sources ----
-  const updateMediaSource = (idx: number, patch: Partial<MediaSourceRow>) => {
-    setMediaSources((prev) =>
+  // ---- helpers publishers ----
+  const updatePublisher = (idx: number, patch: Partial<PublisherRow>) => {
+    setPublishers((prev) =>
       prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
     );
   };
-  const addMediaSource = () =>
-    setMediaSources((prev) => [
+  const addPublisher = () =>
+    setPublishers((prev) => [
       ...prev,
       {
-        name: "",
-        campaign_type: "cpa",
-        target_cpi: "",
-        min_installs_to_evaluate: "30"
+        nome: "",
+        media_sources: [""],
+        // Ja inicia com 1 linha de payout por evento atual (vazias).
+        payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" }))
       }
     ]);
-  const removeMediaSource = (idx: number) =>
-    setMediaSources((prev) => prev.filter((_, i) => i !== idx));
+  const removePublisher = (idx: number) =>
+    setPublishers((prev) => prev.filter((_, i) => i !== idx));
+
+  // media sources (strings) dentro de um publisher
+  const updatePublisherMediaSource = (
+    pubIdx: number,
+    msIdx: number,
+    value: string
+  ) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? {
+              ...pub,
+              media_sources: pub.media_sources.map((ms, j) =>
+                j === msIdx ? value : ms
+              )
+            }
+          : pub
+      )
+    );
+  const addPublisherMediaSource = (pubIdx: number) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? { ...pub, media_sources: [...pub.media_sources, ""] }
+          : pub
+      )
+    );
+  const removePublisherMediaSource = (pubIdx: number, msIdx: number) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? {
+              ...pub,
+              media_sources:
+                pub.media_sources.length <= 1
+                  ? pub.media_sources
+                  : pub.media_sources.filter((_, j) => j !== msIdx)
+            }
+          : pub
+      )
+    );
+
+  // payout por evento dentro de um publisher
+  const updatePublisherPayout = (
+    pubIdx: number,
+    poIdx: number,
+    value: string
+  ) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? {
+              ...pub,
+              payouts: pub.payouts.map((po, j) =>
+                j === poIdx ? { ...po, payout: value } : po
+              )
+            }
+          : pub
+      )
+    );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,8 +432,6 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         return n;
       };
 
-      const payout = parseOpt(row.payout, "Payout");
-      if (payout === "ERR") return;
       const targetCpa = parseOpt(row.target_cpa, "PO (CPA)");
       if (targetCpa === "ERR") return;
 
@@ -347,7 +450,6 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
       cleanEventos.push({
         nome: nomeTrim,
-        payout,
         target_cpa: targetCpa,
         budget_monthly: budgetMonthly
       });
@@ -374,41 +476,44 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       });
     }
 
-    // Media sources
-    const cleanMediaSources: CampanhaMediaSource[] = [];
-    for (let i = 0; i < mediaSources.length; i++) {
-      const row = mediaSources[i];
-      const nameTrim = row.name.trim();
-      if (!nameTrim) continue;
+    // Publishers — cada um com media sources (strings) + PO por evento
+    const cleanPublishers: CampanhaPublisher[] = [];
+    for (let i = 0; i < publishers.length; i++) {
+      const pub = publishers[i];
+      const nomeTrim = pub.nome.trim();
+      const cleanMs = pub.media_sources
+        .map((ms) => ms.trim())
+        .filter(Boolean);
+      // Pula publishers totalmente vazios (sem nome, sem ms, sem payout).
+      const hasPayout = pub.payouts.some((po) => po.payout.trim());
+      if (!nomeTrim && cleanMs.length === 0 && !hasPayout) continue;
+      if (!nomeTrim) {
+        setError(`Publisher ${i + 1}: informe o nome (ou remova a linha).`);
+        return;
+      }
 
-      let targetCpi: number | null = null;
-      if (row.campaign_type === "cpi") {
-        if (row.target_cpi.trim()) {
-          targetCpi = parseNumberPtBr(row.target_cpi);
-          if (Number.isNaN(targetCpi) || targetCpi < 0) {
-            setError(`Media source "${nameTrim}": target_cpi invalido.`);
+      const cleanPayouts: { evento_nome: string; payout: number | null }[] = [];
+      for (const po of pub.payouts) {
+        const evNome = po.evento_nome.trim();
+        if (!evNome) continue;
+        const raw = po.payout.trim();
+        let payoutVal: number | null = null;
+        if (raw) {
+          payoutVal = parseNumberPtBr(raw);
+          if (Number.isNaN(payoutVal) || payoutVal < 0) {
+            setError(
+              `Publisher "${nomeTrim}": payout invalido no evento "${evNome}".`
+            );
             return;
           }
         }
+        cleanPayouts.push({ evento_nome: evNome, payout: payoutVal });
       }
 
-      let minInstalls = 30;
-      if (row.min_installs_to_evaluate.trim()) {
-        const m = Number(row.min_installs_to_evaluate);
-        if (!Number.isFinite(m) || m < 0) {
-          setError(
-            `Media source "${nameTrim}": min_installs_to_evaluate invalido.`
-          );
-          return;
-        }
-        minInstalls = Math.floor(m);
-      }
-
-      cleanMediaSources.push({
-        name: nameTrim,
-        campaign_type: row.campaign_type,
-        target_cpi: targetCpi,
-        min_installs_to_evaluate: minInstalls,
+      cleanPublishers.push({
+        nome: nomeTrim,
+        media_sources: cleanMs,
+        payouts: cleanPayouts,
         ordem: i
       });
     }
@@ -438,7 +543,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       obs: obs.trim() || null,
       eventos_pagos: cleanEventos,
       apps: cleanApps,
-      media_sources: cleanMediaSources
+      publishers: cleanPublishers
     };
 
     setSubmitting(true);
@@ -784,15 +889,14 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
           <div
             className={`hidden gap-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted sm:grid ${
               budgetMode === "per_event"
-                ? "grid-cols-[1fr,140px,140px,140px,auto]"
-                : "grid-cols-[1fr,140px,140px,auto]"
+                ? "grid-cols-[1fr,140px,140px,auto]"
+                : "grid-cols-[1fr,140px,auto]"
             }`}
           >
             <span>Nome</span>
             <span title="PO contratado por evento (preco pago pelo cliente)">
               PO (CPA)
             </span>
-            <span title="Quanto voce repassa ao publisher">Payout</span>
             {budgetMode === "per_event" && <span>Budget mensal</span>}
             <span />
           </div>
@@ -802,8 +906,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
               key={idx}
               className={`grid items-center gap-2 ${
                 budgetMode === "per_event"
-                  ? "grid-cols-1 sm:grid-cols-[1fr,140px,140px,140px,auto]"
-                  : "grid-cols-1 sm:grid-cols-[1fr,140px,140px,auto]"
+                  ? "grid-cols-1 sm:grid-cols-[1fr,140px,140px,auto]"
+                  : "grid-cols-1 sm:grid-cols-[1fr,140px,auto]"
               }`}
             >
               <input
@@ -818,12 +922,6 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 onChange={(v) => updateEvento(idx, { target_cpa: v })}
                 prefix={moedaSym}
                 aria-label="PO (CPA)"
-              />
-              <PtBrCurrencyInput
-                value={row.payout}
-                onChange={(v) => updateEvento(idx, { payout: v })}
-                prefix={moedaSym}
-                aria-label="Payout"
               />
               {budgetMode === "per_event" && (
                 <PtBrCurrencyInput
@@ -963,93 +1061,143 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         </div>
       </Section>
 
-      <Section title="Media sources" hint="Origens (ex: googleadwords_int)">
+      <Section
+        title="Publishers"
+        hint="Quem entrega a campanha: media sources + PO (payout) por evento"
+      >
         <div className="space-y-3">
-          {mediaSources.length === 0 && (
+          {publishers.length === 0 && (
             <p className="text-xs text-muted">
-              Nenhuma media source cadastrada.
+              Nenhum publisher cadastrado. Cada publisher tem suas media sources
+              e o PO (repasse) por evento.
             </p>
           )}
-          {mediaSources.map((row, idx) => (
+          {publishers.map((pub, pubIdx) => (
             <div
-              key={idx}
-              className="space-y-3 rounded-lg border border-border bg-background p-3"
+              key={pubIdx}
+              className="space-y-4 rounded-lg border border-border bg-background p-3"
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted">
-                  Media source {idx + 1}
+                  Publisher {pubIdx + 1}
                 </p>
                 <button
                   type="button"
-                  onClick={() => removeMediaSource(idx)}
+                  onClick={() => removePublisher(pubIdx)}
                   className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger"
-                  title="Remover media source"
-                  aria-label="Remover media source"
+                  title="Remover publisher"
+                  aria-label="Remover publisher"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Nome">
-                  <input
-                    type="text"
-                    value={row.name}
-                    onChange={(e) =>
-                      updateMediaSource(idx, { name: e.target.value })
-                    }
-                    placeholder="Ex: googleadwords_int"
-                    className={inputCls}
-                  />
-                </Field>
-                <Field label="Tipo">
-                  <select
-                    value={row.campaign_type}
-                    onChange={(e) =>
-                      updateMediaSource(idx, {
-                        campaign_type: e.target
-                          .value as MediaSourceCampaignType
-                      })
-                    }
-                    className={inputCls}
+
+              <Field label="Nome">
+                <input
+                  type="text"
+                  value={pub.nome}
+                  onChange={(e) =>
+                    updatePublisher(pubIdx, { nome: e.target.value })
+                  }
+                  placeholder="Ex: Mobupps, Appnext"
+                  className={inputCls}
+                />
+              </Field>
+
+              {/* Media sources (strings, lista dinamica) */}
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">
+                  Media sources
+                  <span className="ml-1 text-xs font-normal text-muted">
+                    (ex: googleadwords_int)
+                  </span>
+                </label>
+                <div className="space-y-2">
+                  {pub.media_sources.map((ms, msIdx) => (
+                    <div key={msIdx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={ms}
+                        onChange={(e) =>
+                          updatePublisherMediaSource(
+                            pubIdx,
+                            msIdx,
+                            e.target.value
+                          )
+                        }
+                        placeholder="Ex: mobupps_int"
+                        className={inputCls}
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removePublisherMediaSource(pubIdx, msIdx)
+                        }
+                        disabled={pub.media_sources.length <= 1}
+                        className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
+                        title="Remover media source"
+                        aria-label="Remover media source"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => addPublisherMediaSource(pubIdx)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
                   >
-                    <option value="cpa">CPA</option>
-                    <option value="cpi">CPI</option>
-                  </select>
-                </Field>
-                {row.campaign_type === "cpi" && (
-                  <Field label="Target CPI" hint={`em ${moedaSym}`}>
-                    <PtBrCurrencyInput
-                      value={row.target_cpi}
-                      onChange={(v) =>
-                        updateMediaSource(idx, { target_cpi: v })
-                      }
-                      prefix={moedaSym}
-                    />
-                  </Field>
+                    <Plus className="h-3.5 w-3.5" />
+                    Adicionar media source
+                  </button>
+                </div>
+              </div>
+
+              {/* PO por evento */}
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">
+                  PO por evento
+                  <span className="ml-1 text-xs font-normal text-muted">
+                    (repasse em {moedaSym})
+                  </span>
+                </label>
+                {eventoNomes.length === 0 ? (
+                  <p className="text-xs text-muted">
+                    Cadastre eventos pagos acima (com nome) para definir o PO por
+                    evento.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {pub.payouts.map((po, poIdx) => (
+                      <div
+                        key={po.evento_nome}
+                        className="grid grid-cols-[1fr,160px] items-center gap-2"
+                      >
+                        <span className="truncate text-sm text-foreground">
+                          {po.evento_nome}
+                        </span>
+                        <PtBrCurrencyInput
+                          value={po.payout}
+                          onChange={(v) =>
+                            updatePublisherPayout(pubIdx, poIdx, v)
+                          }
+                          prefix={moedaSym}
+                          aria-label={`Payout ${po.evento_nome}`}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 )}
-                <Field label="Min. installs p/ avaliar">
-                  <input
-                    type="number"
-                    min="0"
-                    value={row.min_installs_to_evaluate}
-                    onChange={(e) =>
-                      updateMediaSource(idx, {
-                        min_installs_to_evaluate: e.target.value
-                      })
-                    }
-                    className={inputCls}
-                  />
-                </Field>
               </div>
             </div>
           ))}
           <button
             type="button"
-            onClick={addMediaSource}
+            onClick={addPublisher}
             className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
           >
             <Plus className="h-3.5 w-3.5" />
-            Adicionar media source
+            Adicionar publisher
           </button>
         </div>
       </Section>

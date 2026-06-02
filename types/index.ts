@@ -13,19 +13,18 @@ export type AppPlatform = "android" | "ios";
 
 export type MetricPlatform = "android" | "ios" | "consolidado";
 
-export type MediaSourceCampaignType = "cpa" | "cpi";
-
 export type CampanhaMMP = "appsflyer" | "adjust";
 
 /**
- * 1 evento da campanha = nome + payout (repasse) + target_cpa (CPA contratado)
+ * 1 evento da campanha = nome + target_cpa (PO/CPA contratado pelo cliente)
  * + budget_monthly (so quando budget_mode === 'per_event').
+ * O payout (repasse ao publisher) NAO vive mais aqui — ele e por publisher,
+ * em `CampanhaPublisher.payouts` (keyado por `evento_nome`).
  * A moeda dos valores e a moeda da campanha (campo `moeda` em `Campanha`).
  */
 export interface CampanhaEvento {
   id?: string | null;
   nome: string;
-  payout?: number | null;
   target_cpa?: number | null;
   budget_monthly?: number | null;
   ordem?: number;
@@ -41,12 +40,21 @@ export interface CampanhaApp {
   ordem?: number;
 }
 
-export interface CampanhaMediaSource {
+/** PO (payout) repassado a um publisher por evento. Keyado por `evento_nome`. */
+export interface CampanhaPublisherPayout {
+  evento_nome: string;
+  payout: number | null;
+}
+
+/**
+ * Publisher cadastrado na campanha. Cada publisher tem suas media sources
+ * (strings, ex: "googleadwords_int") e o PO por evento (`payouts`, casado por nome).
+ */
+export interface CampanhaPublisher {
   id?: string | null;
-  name: string;
-  campaign_type: MediaSourceCampaignType;
-  target_cpi?: number | null;
-  min_installs_to_evaluate?: number;
+  nome: string;
+  media_sources: string[];
+  payouts: CampanhaPublisherPayout[];
   ordem?: number;
 }
 
@@ -95,9 +103,11 @@ export interface Campanha {
   // Eventos pagos (backend usa esse nome). Moeda vem da campanha.
   eventos_pagos?: CampanhaEvento[];
 
-  // Apps e media sources (para integracao com api_af)
+  // Apps (para integracao com api_af)
   apps?: CampanhaApp[];
-  media_sources?: CampanhaMediaSource[];
+
+  // Publishers cadastrados (media sources + PO por evento). Substituiu media_sources.
+  publishers?: CampanhaPublisher[];
 
   // Criativo e observacoes
   criativo?: string | null;
@@ -241,6 +251,16 @@ export interface FechamentoPublisher {
   spend_real?: number | null;
 }
 
+/**
+ * PO acordado vindo do CADASTRO da campanha (campanhas_publishers).
+ * Referencia pro front comparar com o realizado (casa por NOME do publisher).
+ */
+export interface FechamentoPublisherCadastrado {
+  publisher_name: string;
+  media_sources: string[];
+  po_acordado: CampanhaPublisherPayout[];
+}
+
 export interface Fechamento {
   id: string | null; // null = stub (nao persistido ainda)
   campanha_id: string;
@@ -257,6 +277,8 @@ export interface Fechamento {
   updated_at?: string | null;
   is_locked: boolean;
   publishers: FechamentoPublisher[];
+  // PO acordado do cadastro (referencia; casa por nome com `publishers`).
+  publishers_cadastrados?: FechamentoPublisherCadastrado[];
 }
 
 /** Body do POST /campanhas/{id}/fechamento?month=YYYY-MM. */

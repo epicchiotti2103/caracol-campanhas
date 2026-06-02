@@ -27,7 +27,7 @@ import {
 import type {
   Campanha,
   CampanhaApp,
-  CampanhaMediaSource,
+  CampanhaPublisher,
   Moeda
 } from "@/types";
 
@@ -333,9 +333,9 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
         <AppsTable apps={campanha.apps} />
       </Section>
 
-      <Section title="Media sources">
-        <MediaSourcesTable
-          sources={campanha.media_sources}
+      <Section title="Publishers">
+        <PublishersTable
+          publishers={campanha.publishers}
           moeda={campanha.moeda}
         />
       </Section>
@@ -452,7 +452,6 @@ function EventosTable({
     return <p className="text-sm text-muted">—</p>;
   }
   const showBudgetMonthly = budgetMode === "per_event";
-  const totalPayout = eventos.reduce((acc, ev) => acc + (ev.payout ?? 0), 0);
   const totalBudget = showBudgetMonthly
     ? eventos.reduce((acc, ev) => acc + (ev.budget_monthly ?? 0), 0)
     : null;
@@ -466,9 +465,6 @@ function EventosTable({
             </th>
             <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
               PO (CPA)
-            </th>
-            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
-              Payout
             </th>
             {showBudgetMonthly && (
               <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
@@ -487,9 +483,6 @@ function EventosTable({
               <td className="px-3 py-2 text-right font-mono text-foreground">
                 {formatCurrency(ev.target_cpa, moeda)}
               </td>
-              <td className="px-3 py-2 text-right font-mono text-foreground">
-                {formatCurrency(ev.payout, moeda)}
-              </td>
               {showBudgetMonthly && (
                 <td className="px-3 py-2 text-right font-mono text-foreground">
                   {formatCurrency(ev.budget_monthly, moeda)}
@@ -497,22 +490,19 @@ function EventosTable({
               )}
             </tr>
           ))}
-          <tr className="border-t border-border bg-background/40">
-            <td
-              className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
-              colSpan={2}
-            >
-              Total
-            </td>
-            <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
-              {formatCurrency(totalPayout, moeda)}
-            </td>
-            {showBudgetMonthly && (
+          {showBudgetMonthly && (
+            <tr className="border-t border-border bg-background/40">
+              <td
+                className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
+                colSpan={2}
+              >
+                Total budget
+              </td>
               <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
                 {formatCurrency(totalBudget, moeda)}
               </td>
-            )}
-          </tr>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
@@ -616,7 +606,7 @@ function DuplicateModal({
           <span className="font-semibold text-primary">
             {toShort || toLabel}
           </span>
-          ? Vai copiar apps, media sources e eventos pagos. Voce edita depois se
+          ? Vai copiar apps, publishers e eventos pagos. Voce edita depois se
           quiser ajustar budget/eventos.
         </p>
         <div className="flex justify-end gap-2">
@@ -643,59 +633,89 @@ function DuplicateModal({
   );
 }
 
-function MediaSourcesTable({
-  sources,
+function PublishersTable({
+  publishers,
   moeda
 }: {
-  sources: CampanhaMediaSource[] | undefined;
+  publishers: CampanhaPublisher[] | undefined;
   moeda: Moeda | string | null | undefined;
 }) {
-  if (!sources || sources.length === 0) {
+  if (!publishers || publishers.length === 0) {
     return <p className="text-sm text-muted">—</p>;
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-background/40">
-            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-              Nome
-            </th>
-            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
-              Tipo
-            </th>
-            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
-              Target CPI
-            </th>
-            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
-              Min. installs
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {sources.map((s, i) => (
-            <tr
-              key={s.id || `${s.name}-${i}`}
-              className={
-                i < sources.length - 1 ? "border-b border-border" : ""
-              }
-            >
-              <td className="px-3 py-2 text-foreground">{s.name}</td>
-              <td className="px-3 py-2 text-muted uppercase">
-                {s.campaign_type}
-              </td>
-              <td className="px-3 py-2 text-right font-mono text-foreground">
-                {s.campaign_type === "cpi"
-                  ? formatCurrency(s.target_cpi, moeda)
-                  : "—"}
-              </td>
-              <td className="px-3 py-2 text-right font-mono text-foreground">
-                {s.min_installs_to_evaluate ?? 30}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {publishers.map((pub, i) => (
+        <div
+          key={pub.id || `${pub.nome}-${i}`}
+          className="space-y-3 rounded-lg border border-border bg-background/40 p-4"
+        >
+          <p className="text-sm font-semibold text-foreground">{pub.nome}</p>
+
+          <div>
+            <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted">
+              Media sources
+            </p>
+            {pub.media_sources && pub.media_sources.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {pub.media_sources.map((ms, j) => (
+                  <span
+                    key={`${ms}-${j}`}
+                    className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs text-foreground"
+                  >
+                    {ms}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted">—</p>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted">
+              PO por evento
+            </p>
+            {pub.payouts && pub.payouts.length > 0 ? (
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-surface">
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                        Evento
+                      </th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+                        Payout
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pub.payouts.map((po, j) => (
+                      <tr
+                        key={`${po.evento_nome}-${j}`}
+                        className={
+                          j < pub.payouts.length - 1
+                            ? "border-b border-border"
+                            : ""
+                        }
+                      >
+                        <td className="px-3 py-2 text-foreground">
+                          {po.evento_nome}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-foreground">
+                          {formatCurrency(po.payout, moeda)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">—</p>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

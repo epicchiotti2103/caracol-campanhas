@@ -34,6 +34,7 @@ import type {
   Client,
   Fechamento,
   FechamentoPublisher,
+  FechamentoPublisherCadastrado,
   FechamentoUpsertPayload
 } from "@/types";
 
@@ -101,6 +102,10 @@ export function CampanhaFechamentoModal({
   const [spendRealRaw, setSpendRealRaw] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
   const [publishers, setPublishers] = useState<PublisherRow[]>([]);
+  // PO acordado do cadastro (referencia; casa por NOME com o realizado).
+  const [publishersCadastrados, setPublishersCadastrados] = useState<
+    FechamentoPublisherCadastrado[]
+  >([]);
 
   // ----- Clientes (dropdown buscavel) -----
   const [clients, setClients] = useState<Client[]>([]);
@@ -132,6 +137,7 @@ export function CampanhaFechamentoModal({
       setSpendRealRaw(sumReal > 0 ? sumReal : null);
       setNotes(f.notes || "");
       setPublishers((f.publishers || []).map((p) => toRow(p, f.moeda || moeda)));
+      setPublishersCadastrados(f.publishers_cadastrados || []);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar fechamento.");
     } finally {
@@ -203,6 +209,36 @@ export function CampanhaFechamentoModal({
     if (publishers.length === 0) return false;
     return Math.abs(publishersSum - spendFinalNumber) > 0.01;
   }, [publishers.length, publishersSum, spendFinalNumber]);
+
+  // PO acordado (cadastro) indexado por nome do publisher (case-insensitive).
+  // Referencia pro user ter o numero na frente — SEM calculo de margem.
+  const poAcordadoByPublisher = useMemo(() => {
+    const m = new Map<string, FechamentoPublisherCadastrado>();
+    for (const pc of publishersCadastrados) {
+      if (pc.publisher_name) {
+        m.set(pc.publisher_name.trim().toLowerCase(), pc);
+      }
+    }
+    return m;
+  }, [publishersCadastrados]);
+
+  const formatPoAcordado = useCallback(
+    (publisherName: string): string => {
+      const pc = poAcordadoByPublisher.get(
+        publisherName.trim().toLowerCase()
+      );
+      if (!pc || !pc.po_acordado || pc.po_acordado.length === 0) return "—";
+      return pc.po_acordado
+        .map(
+          (po) =>
+            `${po.evento_nome}: ${
+              po.payout != null ? formatCurrency(po.payout, moeda) : "—"
+            }`
+        )
+        .join(" · ");
+    },
+    [poAcordadoByPublisher, moeda]
+  );
 
   // ----- Handlers de publishers -----
   const updatePub = (idx: number, patch: Partial<PublisherRow>) => {
@@ -302,6 +338,7 @@ export function CampanhaFechamentoModal({
       )) as Fechamento;
       toast.success("Fechamento travado.");
       setFechamento(saved);
+      setPublishersCadastrados(saved.publishers_cadastrados || []);
       onSaved?.(saved);
     } catch (err: any) {
       setError(err?.message || "Falha ao travar fechamento.");
@@ -337,6 +374,7 @@ export function CampanhaFechamentoModal({
       setPublishers(
         (saved.publishers || []).map((p) => toRow(p, saved.moeda || moeda))
       );
+      setPublishersCadastrados(saved.publishers_cadastrados || []);
       onSaved?.(saved);
     } catch (err: any) {
       setError(err?.message || "Falha ao destravar fechamento.");
@@ -555,6 +593,12 @@ export function CampanhaFechamentoModal({
                           <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                             Publisher
                           </th>
+                          <th
+                            className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted"
+                            title="PO (payout) acordado no cadastro da campanha, por evento. Referencia."
+                          >
+                            PO acordado
+                          </th>
                           <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
                             Spend real
                           </th>
@@ -594,6 +638,9 @@ export function CampanhaFechamentoModal({
                                 placeholder="Ex: googleadwords_int"
                                 className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                               />
+                            </td>
+                            <td className="px-3 py-2 text-left text-xs text-muted">
+                              {formatPoAcordado(p.publisher_name)}
                             </td>
                             <td className="px-3 py-2 text-right font-mono text-xs text-muted">
                               {p.spend_real_display}
@@ -646,7 +693,7 @@ export function CampanhaFechamentoModal({
                         <tr className="border-t border-border bg-background/40">
                           <td
                             className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
-                            colSpan={3}
+                            colSpan={4}
                           >
                             Soma
                           </td>

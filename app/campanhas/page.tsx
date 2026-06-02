@@ -398,8 +398,12 @@ function eventosTooltip(
   moeda: Moeda | string | null | undefined
 ): string {
   if (!eventos || eventos.length === 0) return "";
-  const total = eventos.reduce((acc, ev) => acc + (ev.payout ?? 0), 0);
-  return `${formatCurrency(total, moeda)} em ${eventos.length} ${
-    eventos.length === 1 ? "evento" : "eventos"
-  }`;
+  // Lista os eventos com o PO (CPA) contratado de cada um. O payout (repasse)
+  // nao vive mais no evento — ele e por publisher.
+  const parts = eventos.map((ev) => {
+    const cpa =
+      ev.target_cpa != null ? ` (${formatCurrency(ev.target_cpa, moeda)})` : "";
+    return `${ev.nome}${cpa}`;
+  });
+  return parts.join(", ");
 }

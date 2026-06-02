@@ -6,7 +6,7 @@ Faz parte da suite Caracol — entrada pelo [Hub](https://app.aeobr.com.br).
 
 ## Status: producao
 
-CRUD completo, backend integrado, layout de login unificado com o resto da suite. Em 26/05/2026 ganhou integracao com o robo **api_af** (AppsFlyer Pull API): novos campos `tipo`/`budget_mode`/`timezone`/`external_id` na campanha, eventos com `target_cpa`/`budget_monthly`, secoes de **Apps** e **Media sources**, alem da tela de **/desempenho** com cards por plataforma + grafico de historico. Ver `CONTEXT.md` pra evolucao.
+CRUD completo, backend integrado, layout de login unificado com o resto da suite. Em 26/05/2026 ganhou integracao com o robo **api_af** (AppsFlyer Pull API): novos campos `tipo`/`budget_mode`/`timezone`/`external_id` na campanha, eventos com `target_cpa`/`budget_monthly`, secoes de **Apps** e **Publishers**, alem da tela de **/desempenho** com cards por plataforma. Em 02/06/2026 o modelo de media sources virou **Publishers**: cada publisher tem suas media sources (strings) + **PO (payout) por evento** — o payout saiu do evento (que agora so tem `target_cpa`/`budget_monthly`). Ver `CONTEXT.md` pra evolucao.
 
 ## Stack
 
@@ -21,7 +21,7 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - `/login` — split panel (layout unificado da suite)
 - `/` — landing logada com atalhos pra lista e nova campanha
 - `/campanhas` — lista com colunas: Codigo, Inicio, Fim, Nome, Budget, Eventos (count + tooltip com soma), Status
-- `/campanhas/new` — form completo: Identificacao, **Tipo e budget (UA/RTG, budget_mode, timezone, external_id)**, Periodo, App/parceiro, Financeiro (budget + moeda BRL/USD com mascara PT-BR), **Eventos pagos (nome + target_cpa + payout + budget_monthly condicional)**, **Apps (N plataformas android/ios)**, **Media sources (cpa/cpi)**, Criativo e Observacoes
+- `/campanhas/new` — form completo: Identificacao, **Tipo e budget (UA/RTG, budget_mode, timezone, external_id)**, Periodo, App/parceiro, Financeiro (budget + moeda BRL/USD com mascara PT-BR), **Eventos pagos (nome + target_cpa + budget_monthly condicional)**, **Apps (N plataformas android/ios)**, **Publishers (nome + media sources dinamicas + PO/payout por evento, reconciliado por `evento_nome`)**, Criativo e Observacoes
 - `/campanhas/[id]` — detalhe com toggle in-place pra editar (sem rota `/edit` separada); botao "Desempenho" leva pra `/campanhas/[id]/desempenho`
 - `/campanhas/[id]/desempenho` — cards por plataforma (consolidado, android, ios) com gasto/budget + pace + fraude P360 + PA False, alem de grafico de historico (7/30/90 dias) consumindo `/api/v1/campanhas/{id}/metrics/{latest,history}`
 - `/desempenho` — dashboard cross-campanha (link na navbar). Tabela com a linha consolidada (mais recente) de cada campanha: gasto/budget com barra, % MTD, pace_status, % P360 Evt, % PA False, data da ultima atualizacao. Filtros: status / tipo (UA/RTG) / pace_status (incl. "sem dados") / busca por nome/codigo. Fetch: 1 chamada a `/campanhas` + Promise.allSettled em `/{id}/metrics/latest` por campanha (opcao A; pra >20 campanhas pedir endpoint agregador no backend)
@@ -34,14 +34,14 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - **api_af**: `tipo` (`ua` | `rtg`), `budget_mode` (`total` | `per_event`), `timezone`, `external_id` (= `product_name` no `config/apps.yaml` do api_af), `mmp` (`appsflyer` | `adjust`)
 - **Parceria Wave** (`parceria_wave`, default false): se Sim, a campanha entra no relatorio AppsFlyer enviado pro parceiro Wavesync (cron seg/qua/sex do api_af, `--only-wave`). Coluna "Wave" (Sim/Nao) na lista. Default Nao = nao vaza pro parceiro sem marcar
 - **Coleta de dados** (`coleta_manual`, default false): `Manual` tira a campanha do `apps.yaml` (robo nao busca) e libera o form "Inserir metrics manualmente" mesmo em `mmp=appsflyer` (ex: campanha de parceiro so com input manual). O backend auto-calcula `spend_pace_pct`/`budget_used_pct` no `/metrics/manual` a partir do budget da campanha
-- **Eventos pagos** (tabela filha `campanhas_eventos_pagos`): `nome` + `payout` + `target_cpa` + `budget_monthly` (este so obrigatorio quando `budget_mode === 'per_event'`). Edicao do array faz replace (PATCH manda lista nova inteira)
+- **Eventos pagos** (tabela filha `campanhas_eventos_pagos`): `nome` + `target_cpa` (= PO/CPA contratado pelo cliente) + `budget_monthly` (este so obrigatorio quando `budget_mode === 'per_event'`). **Sem payout** — o payout virou propriedade do publisher. Edicao do array faz replace (PATCH manda lista nova inteira)
 - **Apps** (tabela filha `campanhas_apps`): N apps `{name, app_id, platform (android|ios), p360_enabled, only_primary_attribution, ordem}`. Replace total no PATCH
-- **Media sources** (tabela filha `campanhas_media_sources`): N origens `{name, campaign_type (cpa|cpi), target_cpi?, min_installs_to_evaluate}`. Replace total no PATCH
+- **Publishers** (filhas `campanhas_publishers` + `campanhas_publisher_media_sources` + `campanhas_publisher_payouts`): cada publisher `{nome, media_sources: [str], payouts: [{evento_nome, payout}], ordem}`. As media sources sao strings simples; o payout (PO/repasse) e por evento, keyado por `evento_nome` (sobrevive ao replace dos eventos). Replace total no PATCH
 - **Gestores** (tabela filha `campanhas_users`): N:N com users
 - **Owner**: `campanhas.owner_id` (quem criou)
 - **Metrics** (tabela filha `campanhas_metrics_daily`, alimentada pelo api_af): row por `(campanha_id, platform, report_date)` com `spend_actual`, `budget_monthly`, `spend_pace_pct`, `budget_used_pct`, `p360_event_rate`, `pa_false_rate`, `pace_status`
 
-> Modelo antigo (ate 19/05) tinha `eventos_pagos` (so nome) + `campanhas_pos` (tabela paralela com numero + moeda). Refatorado em 22/05 — PO virou payout do evento. Em 26/05 evento ganhou `target_cpa` + `budget_monthly` e a campanha ganhou `tipo`/`budget_mode`/`timezone`/`external_id` + filhas `campanhas_apps` e `campanhas_media_sources`. Em 01/06 ganhou `parceria_wave` (relatorio Wavesync) e `coleta_manual` (fora do robo + input manual).
+> Modelo antigo (ate 19/05) tinha `eventos_pagos` (so nome) + `campanhas_pos` (tabela paralela com numero + moeda). Refatorado em 22/05 — PO virou payout do evento. Em 26/05 evento ganhou `target_cpa` + `budget_monthly` e a campanha ganhou `tipo`/`budget_mode`/`timezone`/`external_id` + filhas `campanhas_apps` e `campanhas_media_sources`. Em 01/06 ganhou `parceria_wave` (relatorio Wavesync) e `coleta_manual` (fora do robo + input manual). Em 02/06 `campanhas_media_sources` foi substituida por **Publishers** (`campanhas_publishers` + media sources/payouts filhos): o `payout` saiu do evento e virou PO por evento dentro de cada publisher.
 
 ## URLs e infra
 
@@ -83,10 +83,11 @@ Configurar na Vercel as mesmas env vars do `.env.example`, com `NEXT_PUBLIC_API_
 Vive no Tracker — qualquer rota nova em `/api/v1/campanhas/*` e trabalho do subagente `tracker`. Repo: https://github.com/epicchiotti2103/tracker-caracol.
 
 Endpoints principais:
-- `GET /api/v1/campanhas` — lista (cada item ja inclui `eventos_pagos`, `apps`, `media_sources`)
-- `GET /api/v1/campanhas/{id}` — detalhe completo
-- `POST /api/v1/campanhas` — cria. Body: campos da campanha + `eventos_pagos: [{nome, payout?, target_cpa?, budget_monthly?}]` + `apps: [{name, app_id, platform, p360_enabled, only_primary_attribution, ordem}]` + `media_sources: [{name, campaign_type, target_cpi?, min_installs_to_evaluate, ordem}]`
-- `PATCH /api/v1/campanhas/{id}` — atualiza; arrays (`eventos_pagos`/`apps`/`media_sources`) fazem replace total quando enviados
+- `GET /api/v1/campanhas` — lista (cada item inclui `eventos_pagos`; **nao** traz `apps`/`publishers` — payload morto na listagem, so no detalhe)
+- `GET /api/v1/campanhas/{id}` — detalhe completo (inclui `apps` + `publishers`)
+- `GET /api/v1/campanhas/{id}/publishers` — `{items, total}` dos publishers (substituiu o removido `/{id}/media-sources`)
+- `POST /api/v1/campanhas` — cria. Body: campos da campanha + `eventos_pagos: [{nome, target_cpa?, budget_monthly?}]` + `apps: [{name, app_id, platform, p360_enabled, only_primary_attribution, ordem}]` + `publishers: [{nome, media_sources: [str], payouts: [{evento_nome, payout}]}]`
+- `PATCH /api/v1/campanhas/{id}` — atualiza; arrays (`eventos_pagos`/`apps`/`publishers`) fazem replace total quando enviados
 - `DELETE /api/v1/campanhas/{id}` — soft delete (status `encerrada`)
 - `GET /api/v1/campanhas/{id}/metrics/latest` — snapshot mais recente por plataforma (`android`/`ios`/`consolidado`)
 - `GET /api/v1/campanhas/{id}/metrics/history?days=N` — serie diaria (default 30, max 180). Usada pelo grafico de /desempenho
