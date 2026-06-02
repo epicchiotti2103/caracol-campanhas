@@ -26,8 +26,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { CampanhaFechamentoModal } from "@/components/campanha-fechamento-modal";
-import { apiFetch } from "@/lib/api";
-import { cachedFetch } from "@/lib/cache";
+import { cachedFetch, MONTHS_AVAILABLE_TTL_MS } from "@/lib/cache";
 import {
   currentMonthString,
   formatCurrency,
@@ -145,8 +144,9 @@ function DesempenhoDashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const res: CampanhaMonthsAvailable = await apiFetch(
-          "/campanhas?months_available=1"
+        const res = await cachedFetch<CampanhaMonthsAvailable>(
+          "/campanhas?months_available=1",
+          { ttlMs: MONTHS_AVAILABLE_TTL_MS }
         );
         const list = res?.months || [];
         setMonths(list);
@@ -169,15 +169,32 @@ function DesempenhoDashboard() {
     setError("");
     try {
       const monthQuery = selectedMonth ? `?month=${selectedMonth}` : "";
-      const [listRes, summaryRes, fechSummaryRes] = await Promise.all([
-        apiFetch(`/campanhas${monthQuery}`),
-        apiFetch(
-          `/campanhas/dashboard/summary${monthQuery}`
+      const force = opts?.silent === true;
+
+      // As 4 requests sao independentes (so dependem do `month`, ja no state).
+      // Disparam TODAS em paralelo; o merge em memoria roda depois das 4
+      // resolverem. Tempo = max(4) em vez de max(3) + metrics em waterfall.
+      const [listRes, summaryRes, fechSummaryRes, aggrRes] = await Promise.all([
+        cachedFetch<any>(`/campanhas${monthQuery}`, {
+          ttlMs: 30_000,
+          force
+        }),
+        cachedFetch<CampanhaDashboardSummary>(
+          `/campanhas/dashboard/summary${monthQuery}`,
+          { ttlMs: 30_000, force }
         ).catch(() => null),
-        apiFetch(
-          `/campanhas/fechamento/summary${monthQuery}`
-        ).catch(() => null)
+        cachedFetch<FechamentoSummary>(
+          `/campanhas/fechamento/summary${monthQuery}`,
+          { ttlMs: 30_000, force }
+        ).catch(() => null),
+        selectedMonth
+          ? cachedFetch<MetricsSummaryResponse>(
+              `/campanhas/metrics/summary?month=${selectedMonth}`,
+              { ttlMs: 30_000, force }
+            ).catch(() => null)
+          : Promise.resolve(null)
       ]);
+
       const campanhas: Campanha[] = Array.isArray(listRes)
         ? listRes
         : listRes?.items || [];
@@ -185,21 +202,11 @@ function DesempenhoDashboard() {
       setSummary(summaryRes as CampanhaDashboardSummary | null);
       setFechSummary(fechSummaryRes as FechamentoSummary | null);
 
-      // 1 request agregador (metrics latest + fechamento de TODAS as campanhas do
-      // mes), em vez do fan-out 2N (N x metrics/latest + N x fechamento).
-      let itemsById = new Map<string, MetricsSummaryItem>();
-      if (selectedMonth) {
-        try {
-          const aggr = await cachedFetch<MetricsSummaryResponse>(
-            `/campanhas/metrics/summary?month=${selectedMonth}`,
-            { ttlMs: 30_000, force: opts?.silent === true }
-          );
-          for (const it of aggr?.items || []) {
-            itemsById.set(it.campanha_id, it);
-          }
-        } catch {
-          // sem agregador: cai pro estado "sem dados" por campanha
-        }
+      // Agregador (metrics latest + fechamento de TODAS as campanhas do mes),
+      // em vez do fan-out 2N (N x metrics/latest + N x fechamento).
+      const itemsById = new Map<string, MetricsSummaryItem>();
+      for (const it of aggrRes?.items || []) {
+        itemsById.set(it.campanha_id, it);
       }
 
       const next: CampanhaSummary[] = campanhas.map((campanha) => {
