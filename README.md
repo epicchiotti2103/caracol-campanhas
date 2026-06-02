@@ -31,7 +31,9 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - **Codigo CMP-NNN** gerado automaticamente por trigger no Postgres (`set_campanha_codigo`)
 - **Periodo** (inicio/fim), **app/parceiro**, **plataforma**, **fluxo**
 - **Financeiro**: budget + moeda BRL ou USD (moeda **da campanha** — todos os valores monetarios dos eventos usam essa moeda)
-- **api_af**: `tipo` (`ua` | `rtg`), `budget_mode` (`total` | `per_event`), `timezone`, `external_id` (= `product_name` no `config/apps.yaml` do api_af)
+- **api_af**: `tipo` (`ua` | `rtg`), `budget_mode` (`total` | `per_event`), `timezone`, `external_id` (= `product_name` no `config/apps.yaml` do api_af), `mmp` (`appsflyer` | `adjust`)
+- **Parceria Wave** (`parceria_wave`, default false): se Sim, a campanha entra no relatorio AppsFlyer enviado pro parceiro Wavesync (cron seg/qua/sex do api_af, `--only-wave`). Coluna "Wave" (Sim/Nao) na lista. Default Nao = nao vaza pro parceiro sem marcar
+- **Coleta de dados** (`coleta_manual`, default false): `Manual` tira a campanha do `apps.yaml` (robo nao busca) e libera o form "Inserir metrics manualmente" mesmo em `mmp=appsflyer` (ex: campanha de parceiro so com input manual). O backend auto-calcula `spend_pace_pct`/`budget_used_pct` no `/metrics/manual` a partir do budget da campanha
 - **Eventos pagos** (tabela filha `campanhas_eventos_pagos`): `nome` + `payout` + `target_cpa` + `budget_monthly` (este so obrigatorio quando `budget_mode === 'per_event'`). Edicao do array faz replace (PATCH manda lista nova inteira)
 - **Apps** (tabela filha `campanhas_apps`): N apps `{name, app_id, platform (android|ios), p360_enabled, only_primary_attribution, ordem}`. Replace total no PATCH
 - **Media sources** (tabela filha `campanhas_media_sources`): N origens `{name, campaign_type (cpa|cpi), target_cpi?, min_installs_to_evaluate}`. Replace total no PATCH
@@ -39,7 +41,7 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - **Owner**: `campanhas.owner_id` (quem criou)
 - **Metrics** (tabela filha `campanhas_metrics_daily`, alimentada pelo api_af): row por `(campanha_id, platform, report_date)` com `spend_actual`, `budget_monthly`, `spend_pace_pct`, `budget_used_pct`, `p360_event_rate`, `pa_false_rate`, `pace_status`
 
-> Modelo antigo (ate 19/05) tinha `eventos_pagos` (so nome) + `campanhas_pos` (tabela paralela com numero + moeda). Refatorado em 22/05 — PO virou payout do evento. Em 26/05 evento ganhou `target_cpa` + `budget_monthly` e a campanha ganhou `tipo`/`budget_mode`/`timezone`/`external_id` + filhas `campanhas_apps` e `campanhas_media_sources`.
+> Modelo antigo (ate 19/05) tinha `eventos_pagos` (so nome) + `campanhas_pos` (tabela paralela com numero + moeda). Refatorado em 22/05 — PO virou payout do evento. Em 26/05 evento ganhou `target_cpa` + `budget_monthly` e a campanha ganhou `tipo`/`budget_mode`/`timezone`/`external_id` + filhas `campanhas_apps` e `campanhas_media_sources`. Em 01/06 ganhou `parceria_wave` (relatorio Wavesync) e `coleta_manual` (fora do robo + input manual).
 
 ## URLs e infra
 
