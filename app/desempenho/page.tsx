@@ -3,10 +3,12 @@
 // Dashboard cross-campanha. Lista TODAS as campanhas com a linha consolidada
 // (mais recente) de cada uma + big numbers do mes (via /dashboard/summary).
 //
-// Estrategia de fetch: GET /campanhas?month=YYYY-MM pega a lista do mes,
-// depois Promise.all em /campanhas/{id}/metrics/latest pra cada uma.
-// /dashboard/summary?month=YYYY-MM pega os totals (campanhas_count, budget_total,
-// spend_total, budget_used_pct).
+// Estrategia de fetch (otimizada): em vez do fan-out 2N antigo (N x
+// /{id}/metrics/latest + N x /{id}/fechamento), usa 1 unico request ao
+// agregador GET /campanhas/metrics/summary?month=YYYY-MM, que devolve
+// metrics latest por plataforma + status de fechamento de TODAS as campanhas
+// do mes. Total de requests da tela: 4 (lista + dashboard/summary +
+// fechamento/summary + metrics/summary), independente do numero de campanhas.
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -25,6 +27,7 @@ import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { CampanhaFechamentoModal } from "@/components/campanha-fechamento-modal";
 import { apiFetch } from "@/lib/api";
+import { cachedFetch } from "@/lib/cache";
 import {
   currentMonthString,
   formatCurrency,
@@ -41,12 +44,10 @@ import {
 import type {
   Campanha,
   CampanhaDashboardSummary,
-  CampanhaMetricsLatest,
   CampanhaMetricsRow,
   CampanhaMonthsAvailable,
   CampanhaStatus,
   CampanhaTipo,
-  Fechamento,
   FechamentoSummary,
   MetricPlatform,
   Moeda
@@ -76,20 +77,29 @@ const PACE_OPTIONS: { value: string; label: string }[] = [
   { value: "SEM_DADOS", label: "Sem dados" }
 ];
 
+type FechamentoStatus = "aberto" | "fechado" | "travado";
+
 interface CampanhaSummary {
   campanha: Campanha;
   row: CampanhaMetricsRow | null;
   reportDate: string | null;
   noData: boolean;
-  fechamento: Fechamento | null;
+  fechamentoStatus: FechamentoStatus;
 }
 
-type FechamentoStatus = "aberto" | "fechado" | "travado";
+// Shape do agregador GET /campanhas/metrics/summary?month=YYYY-MM
+interface MetricsSummaryItem {
+  campanha_id: string;
+  report_date: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  platforms: Partial<Record<MetricPlatform, CampanhaMetricsRow>>;
+  fechamento: { exists: boolean; locked: boolean; status: FechamentoStatus };
+}
 
-function fechamentoStatusOf(f: Fechamento | null | undefined): FechamentoStatus {
-  if (!f || !f.id) return "aberto";
-  if (f.is_locked || f.locked) return "travado";
-  return "fechado";
+interface MetricsSummaryResponse {
+  month: string;
+  items: MetricsSummaryItem[];
 }
 
 export default function DesempenhoDashboardPage() {
@@ -175,51 +185,37 @@ function DesempenhoDashboard() {
       setSummary(summaryRes as CampanhaDashboardSummary | null);
       setFechSummary(fechSummaryRes as FechamentoSummary | null);
 
-      // Metrics latest + fechamento (em paralelo por campanha)
-      const [metricsResults, fechResults] = await Promise.all([
-        Promise.allSettled(
-          campanhas.map((c) =>
-            apiFetch(`/campanhas/${c.id}/metrics/latest`).then(
-              (m) => m as CampanhaMetricsLatest
-            )
-          )
-        ),
-        Promise.allSettled(
-          campanhas.map((c) => {
-            const mes = selectedMonth || "";
-            if (!mes) return Promise.resolve(null as Fechamento | null);
-            return apiFetch(
-              `/campanhas/${c.id}/fechamento?month=${mes}`
-            ).then((f) => f as Fechamento);
-          })
-        )
-      ]);
-
-      const next: CampanhaSummary[] = campanhas.map((campanha, i) => {
-        const r = metricsResults[i];
-        const f = fechResults[i];
-        const fechamento =
-          f.status === "fulfilled" ? (f.value as Fechamento | null) : null;
-
-        if (r.status === "rejected") {
-          return {
-            campanha,
-            row: null,
-            reportDate: null,
-            noData: true,
-            fechamento
-          };
+      // 1 request agregador (metrics latest + fechamento de TODAS as campanhas do
+      // mes), em vez do fan-out 2N (N x metrics/latest + N x fechamento).
+      let itemsById = new Map<string, MetricsSummaryItem>();
+      if (selectedMonth) {
+        try {
+          const aggr = await cachedFetch<MetricsSummaryResponse>(
+            `/campanhas/metrics/summary?month=${selectedMonth}`,
+            { ttlMs: 30_000, force: opts?.silent === true }
+          );
+          for (const it of aggr?.items || []) {
+            itemsById.set(it.campanha_id, it);
+          }
+        } catch {
+          // sem agregador: cai pro estado "sem dados" por campanha
         }
-        const latest = r.value;
-        const platforms = latest?.platforms || {};
+      }
+
+      const next: CampanhaSummary[] = campanhas.map((campanha) => {
+        const item = itemsById.get(campanha.id);
+        const fechamentoStatus: FechamentoStatus =
+          item?.fechamento?.status || "aberto";
+        const platforms = item?.platforms || {};
         const keys = Object.keys(platforms) as MetricPlatform[];
-        if (keys.length === 0 || !latest?.report_date) {
+
+        if (keys.length === 0 || !item?.report_date) {
           return {
             campanha,
             row: null,
             reportDate: null,
             noData: true,
-            fechamento
+            fechamentoStatus
           };
         }
         let row: CampanhaMetricsRow | null = null;
@@ -230,15 +226,14 @@ function DesempenhoDashboard() {
           }
         }
         if (!row) {
-          const firstKey = keys[0];
-          row = platforms[firstKey] || null;
+          row = platforms[keys[0]] || null;
         }
         return {
           campanha,
           row,
-          reportDate: latest.report_date,
+          reportDate: item.report_date,
           noData: row == null,
-          fechamento
+          fechamentoStatus
         };
       });
 
@@ -665,7 +660,7 @@ function SummaryRow({
   isLast: boolean;
   onOpenFechamento: () => void;
 }) {
-  const { campanha, row, reportDate, noData, fechamento } = summary;
+  const { campanha, row, reportDate, noData, fechamentoStatus } = summary;
   const moeda: Moeda | string | null | undefined = campanha.moeda;
   const paceStatus = normalizePaceStatus(row?.pace_status);
   const spend = row?.spend_actual ?? null;
@@ -733,7 +728,7 @@ function SummaryRow({
       </td>
       <td className="whitespace-nowrap px-4 py-4">
         <FechamentoBadge
-          fechamento={fechamento}
+          status={fechamentoStatus}
           onClick={onOpenFechamento}
         />
       </td>
@@ -845,13 +840,12 @@ function EmptyStateNoFilter() {
 }
 
 function FechamentoBadge({
-  fechamento,
+  status,
   onClick
 }: {
-  fechamento: Fechamento | null;
+  status: FechamentoStatus;
   onClick: () => void;
 }) {
-  const status = fechamentoStatusOf(fechamento);
   const cls =
     status === "travado"
       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
