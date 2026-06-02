@@ -36,7 +36,7 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - **Coleta de dados** (`coleta_manual`, default false): `Manual` tira a campanha do `apps.yaml` (robo nao busca) e libera o form "Inserir metrics manualmente" mesmo em `mmp=appsflyer` (ex: campanha de parceiro so com input manual). O backend auto-calcula `spend_pace_pct`/`budget_used_pct` no `/metrics/manual` a partir do budget da campanha
 - **Eventos pagos** (tabela filha `campanhas_eventos_pagos`): `nome` + `target_cpa` (= PO/CPA contratado pelo cliente) + `budget_monthly` (este so obrigatorio quando `budget_mode === 'per_event'`). **Sem payout** — o payout virou propriedade do publisher. Edicao do array faz replace (PATCH manda lista nova inteira)
 - **Apps** (tabela filha `campanhas_apps`): N apps `{name, app_id, platform (android|ios), p360_enabled, only_primary_attribution, ordem}`. Replace total no PATCH
-- **Publishers** (filhas `campanhas_publishers` + `campanhas_publisher_media_sources` + `campanhas_publisher_payouts`): cada publisher `{nome, media_sources: [str], payouts: [{evento_nome, payout}], ordem}`. As media sources sao strings simples; o payout (PO/repasse) e por evento, keyado por `evento_nome` (sobrevive ao replace dos eventos). Replace total no PATCH
+- **Publishers** (filhas `campanhas_publishers` + `campanhas_publisher_media_sources` + `campanhas_publisher_payouts`): cada publisher `{nome, media_sources: [str], payouts: [{evento_nome, payout}], moeda, ordem}`. As media sources sao strings simples; o payout (PO/repasse) e por evento, keyado por `evento_nome` (sobrevive ao replace dos eventos). A `moeda` (`BRL`/`USD`, default `USD`) e **por publisher** e aplica a todos os POs dele — independente da moeda da campanha. Replace total no PATCH
 - **Gestores** (tabela filha `campanhas_users`): N:N com users
 - **Owner**: `campanhas.owner_id` (quem criou)
 - **Metrics** (tabela filha `campanhas_metrics_daily`, alimentada pelo api_af): row por `(campanha_id, platform, report_date)` com `spend_actual`, `budget_monthly`, `spend_pace_pct`, `budget_used_pct`, `p360_event_rate`, `pa_false_rate`, `pace_status`
@@ -86,7 +86,7 @@ Endpoints principais:
 - `GET /api/v1/campanhas` — lista (cada item inclui `eventos_pagos`; **nao** traz `apps`/`publishers` — payload morto na listagem, so no detalhe)
 - `GET /api/v1/campanhas/{id}` — detalhe completo (inclui `apps` + `publishers`)
 - `GET /api/v1/campanhas/{id}/publishers` — `{items, total}` dos publishers (substituiu o removido `/{id}/media-sources`)
-- `POST /api/v1/campanhas` — cria. Body: campos da campanha + `eventos_pagos: [{nome, target_cpa?, budget_monthly?}]` + `apps: [{name, app_id, platform, p360_enabled, only_primary_attribution, ordem}]` + `publishers: [{nome, media_sources: [str], payouts: [{evento_nome, payout}]}]`
+- `POST /api/v1/campanhas` — cria. Body: campos da campanha + `eventos_pagos: [{nome, target_cpa?, budget_monthly?}]` + `apps: [{name, app_id, platform, p360_enabled, only_primary_attribution, ordem}]` + `publishers: [{nome, media_sources: [str], payouts: [{evento_nome, payout}], moeda}]` (`moeda` BRL/USD, default USD)
 - `PATCH /api/v1/campanhas/{id}` — atualiza; arrays (`eventos_pagos`/`apps`/`publishers`) fazem replace total quando enviados
 - `DELETE /api/v1/campanhas/{id}` — soft delete (status `encerrada`)
 - `GET /api/v1/campanhas/{id}/metrics/latest` — snapshot mais recente por plataforma (`android`/`ios`/`consolidado`)

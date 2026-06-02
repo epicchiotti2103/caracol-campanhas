@@ -638,6 +638,7 @@ function PublishersTable({
   moeda
 }: {
   publishers: CampanhaPublisher[] | undefined;
+  // Moeda da campanha — usada so como fallback quando o publisher nao tem moeda.
   moeda: Moeda | string | null | undefined;
 }) {
   if (!publishers || publishers.length === 0) {
@@ -645,12 +646,20 @@ function PublishersTable({
   }
   return (
     <div className="space-y-3">
-      {publishers.map((pub, i) => (
+      {publishers.map((pub, i) => {
+        // PO do publisher e na moeda DELE (default USD), nao na moeda da campanha.
+        const pubMoeda: Moeda | string | null | undefined = pub.moeda ?? moeda;
+        return (
         <div
           key={pub.id || `${pub.nome}-${i}`}
           className="space-y-3 rounded-lg border border-border bg-background/40 p-4"
         >
-          <p className="text-sm font-semibold text-foreground">{pub.nome}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{pub.nome}</p>
+            <span className="rounded-md border border-border bg-surface px-2 py-0.5 text-xs font-medium text-muted">
+              {moedaLabel(pubMoeda)}
+            </span>
+          </div>
 
           <div>
             <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted">
@@ -703,7 +712,7 @@ function PublishersTable({
                           {po.evento_nome}
                         </td>
                         <td className="px-3 py-2 text-right font-mono text-foreground">
-                          {formatCurrency(po.payout, moeda)}
+                          {formatCurrency(po.payout, pubMoeda)}
                         </td>
                       </tr>
                     ))}
@@ -715,7 +724,8 @@ function PublishersTable({
             )}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

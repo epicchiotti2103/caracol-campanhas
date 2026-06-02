@@ -89,6 +89,7 @@ interface PublisherRow {
   nome: string;
   media_sources: string[]; // lista dinamica de strings
   payouts: PublisherPayoutRow[];
+  moeda: Moeda; // moeda do PO desse publisher (aplica a todos os POs)
 }
 
 function toDateInput(s: string | null | undefined): string {
@@ -119,7 +120,8 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
     payouts: (p.payouts ?? []).map((po) => ({
       evento_nome: po.evento_nome ?? "",
       payout: po.payout != null ? formatNumberPtBr(po.payout) : ""
-    }))
+    })),
+    moeda: p.moeda === "BRL" ? "BRL" : "USD"
   };
 }
 
@@ -326,7 +328,9 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         nome: "",
         media_sources: [""],
         // Ja inicia com 1 linha de payout por evento atual (vazias).
-        payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" }))
+        payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" })),
+        // Default USD em publisher novo (padrao do backend).
+        moeda: "USD"
       }
     ]);
   const removePublisher = (idx: number) =>
@@ -514,6 +518,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         nome: nomeTrim,
         media_sources: cleanMs,
         payouts: cleanPayouts,
+        moeda: pub.moeda === "BRL" ? "BRL" : "USD",
         ordem: i
       });
     }
@@ -1092,17 +1097,37 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 </button>
               </div>
 
-              <Field label="Nome">
-                <input
-                  type="text"
-                  value={pub.nome}
-                  onChange={(e) =>
-                    updatePublisher(pubIdx, { nome: e.target.value })
-                  }
-                  placeholder="Ex: Mobupps, Appnext"
-                  className={inputCls}
-                />
-              </Field>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr,140px]">
+                <Field label="Nome">
+                  <input
+                    type="text"
+                    value={pub.nome}
+                    onChange={(e) =>
+                      updatePublisher(pubIdx, { nome: e.target.value })
+                    }
+                    placeholder="Ex: Mobupps, Appnext"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Moeda do PO" hint="aplica a todos os POs">
+                  <select
+                    value={pub.moeda}
+                    onChange={(e) =>
+                      updatePublisher(pubIdx, {
+                        moeda: e.target.value as Moeda
+                      })
+                    }
+                    className={inputCls}
+                    aria-label="Moeda do PO do publisher"
+                  >
+                    {MOEDA_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
 
               {/* Media sources (strings, lista dinamica) */}
               <div>
@@ -1158,7 +1183,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 <label className="mb-1.5 block text-sm font-medium text-foreground">
                   PO por evento
                   <span className="ml-1 text-xs font-normal text-muted">
-                    (repasse em {moedaSym})
+                    (repasse em {moedaShort(pub.moeda)})
                   </span>
                 </label>
                 {eventoNomes.length === 0 ? (
@@ -1181,7 +1206,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                           onChange={(v) =>
                             updatePublisherPayout(pubIdx, poIdx, v)
                           }
-                          prefix={moedaSym}
+                          prefix={moedaShort(pub.moeda)}
                           aria-label={`Payout ${po.evento_nome}`}
                         />
                       </div>

@@ -228,11 +228,13 @@ export function CampanhaFechamentoModal({
         publisherName.trim().toLowerCase()
       );
       if (!pc || !pc.po_acordado || pc.po_acordado.length === 0) return "—";
+      // PO acordado e na moeda do publisher cadastrado (default USD), nao na da campanha.
+      const pcMoeda = pc.moeda ?? moeda;
       return pc.po_acordado
         .map(
           (po) =>
             `${po.evento_nome}: ${
-              po.payout != null ? formatCurrency(po.payout, moeda) : "—"
+              po.payout != null ? formatCurrency(po.payout, pcMoeda) : "—"
             }`
         )
         .join(" · ");

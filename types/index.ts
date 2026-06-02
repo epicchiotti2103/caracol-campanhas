@@ -55,6 +55,8 @@ export interface CampanhaPublisher {
   nome: string;
   media_sources: string[];
   payouts: CampanhaPublisherPayout[];
+  // Moeda do PO desse publisher (aplica a todos os POs dele). Default 'USD'.
+  moeda: Moeda;
   ordem?: number;
 }
 
@@ -259,6 +261,8 @@ export interface FechamentoPublisherCadastrado {
   publisher_name: string;
   media_sources: string[];
   po_acordado: CampanhaPublisherPayout[];
+  // Moeda do PO acordado desse publisher (cadastro). Default 'USD'.
+  moeda: Moeda;
 }
 
 export interface Fechamento {
