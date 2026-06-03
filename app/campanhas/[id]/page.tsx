@@ -175,28 +175,37 @@ function CampanhaDetail() {
         <p className="text-sm text-muted">Campanha nao encontrada.</p>
       ) : (
         <>
-          <div className="mb-6 flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                {campanha.codigo && (
-                  <span className="inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
-                    {campanha.codigo}
-                  </span>
-                )}
-                {campanha.mes_referencia && (
-                  <span className="inline-block rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground">
-                    {formatMesAnoLong(campanha.mes_referencia)}
-                  </span>
-                )}
+          <div className="mb-6 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+              <div className="min-w-0">
+                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                  {campanha.codigo && (
+                    <span className="inline-block rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
+                      {campanha.codigo}
+                    </span>
+                  )}
+                  {campanha.mes_referencia && (
+                    <span className="inline-block rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground">
+                      {formatMesAnoLong(campanha.mes_referencia)}
+                    </span>
+                  )}
+                </div>
+                <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">
+                  Campanha
+                </h4>
+                <h1 className="text-2xl font-semibold text-foreground">
+                  {campanha.name}
+                </h1>
+                <p className="mt-1 text-xs text-muted">
+                  {(campanha.publishers?.length ?? 0)} publishers ·{" "}
+                  {(campanha.publishers ?? []).reduce(
+                    (acc, p) => acc + (p.media_sources?.length ?? 0),
+                    0
+                  )}{" "}
+                  PIDs cadastrados
+                </p>
               </div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">
-                Campanha
-              </h4>
-              <h1 className="truncate text-2xl font-semibold text-foreground">
-                {campanha.name}
-              </h1>
-            </div>
-            <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
               {!editing &&
                 (campanha.status === "pausada" ? (
                   <button
@@ -259,6 +268,7 @@ function CampanhaDetail() {
                   </>
                 )}
               </button>
+              </div>
             </div>
           </div>
 
