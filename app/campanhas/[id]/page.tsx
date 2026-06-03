@@ -292,7 +292,15 @@ function CampanhaDetail() {
           )}
 
           {editing ? (
-            <CampanhaForm initial={campanha} campanhaId={campanha.id} />
+            <CampanhaForm
+              initial={campanha}
+              campanhaId={campanha.id}
+              onSaved={async () => {
+                setEditing(false);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+                await reloadCampanha();
+              }}
+            />
           ) : (
             <CampanhaView campanha={campanha} onReload={reloadCampanha} />
           )}

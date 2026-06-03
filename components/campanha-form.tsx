@@ -64,6 +64,12 @@ interface CampanhaFormProps {
   initial?: Campanha | null;
   /** Quando passado, o form faz PATCH /campanhas/{id} em vez de POST */
   campanhaId?: string;
+  /**
+   * Quando passado, o form NAO faz router.push apos salvar — apenas chama
+   * onSaved(saved) e deixa o pai decidir (ex: edicao inline no detalhe que
+   * fecha o form e recarrega). Sem onSaved, mantem o redirect padrao.
+   */
+  onSaved?: (saved: { id?: string }) => void;
 }
 
 interface EventoRow {
@@ -172,7 +178,7 @@ function appToRow(a: CampanhaApp): AppRow {
   };
 }
 
-export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
+export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps) {
   const router = useRouter();
   const toast = useToast();
   const isEdit = Boolean(campanhaId);
@@ -656,11 +662,16 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       });
 
       toast.success(isEdit ? "Campanha atualizada." : "Campanha criada.");
-      const targetId = saved?.id || campanhaId;
-      if (targetId) {
-        router.push(`/campanhas/${targetId}`);
+      if (onSaved) {
+        // Pai decide o que fazer (ex: fechar edicao inline + recarregar).
+        onSaved(saved);
       } else {
-        router.push("/campanhas");
+        const targetId = saved?.id || campanhaId;
+        if (targetId) {
+          router.push(`/campanhas/${targetId}`);
+        } else {
+          router.push("/campanhas");
+        }
       }
     } catch (err: any) {
       setError(err?.message || "Falha ao salvar campanha.");
