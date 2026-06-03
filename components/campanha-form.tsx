@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertCircle, Plus, Trash2 } from "lucide-react";
+import { Loader2, AlertCircle, Plus, Trash2, Ban, RotateCcw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
+import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
 import {
   blurFormatNumberPtBr,
   formatNumberPtBr,
@@ -85,11 +86,32 @@ interface PublisherPayoutRow {
   payout: string; // mascara PT-BR
 }
 
+// Media source dentro de um publisher no form. Guarda o objeto completo pra
+// poder renderizar e togglar (pausar/reativar). `id` so existe nas ja salvas;
+// media source nova (digitada agora) nao tem id e nao pode ser togglada ainda.
+interface MediaSourceRow {
+  id: string | null;
+  name: string;
+  active: boolean;
+  deactivated_reason: string | null;
+  deactivated_at: string | null;
+}
+
 interface PublisherRow {
   nome: string;
-  media_sources: string[]; // lista dinamica de strings
+  media_sources: MediaSourceRow[]; // lista dinamica de objetos
   payouts: PublisherPayoutRow[];
   moeda: Moeda; // moeda do PO desse publisher (aplica a todos os POs)
+}
+
+function emptyMediaSourceRow(): MediaSourceRow {
+  return {
+    id: null,
+    name: "",
+    active: true,
+    deactivated_reason: null,
+    deactivated_at: null
+  };
 }
 
 function toDateInput(s: string | null | undefined): string {
@@ -111,14 +133,21 @@ function eventoToRow(e: CampanhaEvento): EventoRow {
 }
 
 function publisherToRow(p: CampanhaPublisher): PublisherRow {
-  // media_sources vem como objetos {id, name, active, ...} — o form so edita o nome.
-  const msNames =
+  // media_sources vem como objetos {id, name, active, ...}. Mantemos o objeto
+  // inteiro no state pra poder renderizar status e togglar (pausar/reativar).
+  const msRows: MediaSourceRow[] =
     Array.isArray(p.media_sources) && p.media_sources.length > 0
-      ? p.media_sources.map((ms) => ms?.name ?? "")
-      : [""];
+      ? p.media_sources.map((ms) => ({
+          id: ms?.id ?? null,
+          name: ms?.name ?? "",
+          active: ms?.active !== false,
+          deactivated_reason: ms?.deactivated_reason ?? null,
+          deactivated_at: ms?.deactivated_at ?? null
+        }))
+      : [emptyMediaSourceRow()];
   return {
     nome: p.nome ?? "",
-    media_sources: msNames,
+    media_sources: msRows,
     payouts: (p.payouts ?? []).map((po) => ({
       evento_nome: po.evento_nome ?? "",
       payout: po.payout != null ? formatNumberPtBr(po.payout) : ""
@@ -328,7 +357,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       ...prev,
       {
         nome: "",
-        media_sources: [""],
+        media_sources: [emptyMediaSourceRow()],
         // Ja inicia com 1 linha de payout por evento atual (vazias).
         payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" })),
         // Default USD em publisher novo (padrao do backend).
@@ -338,8 +367,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
   const removePublisher = (idx: number) =>
     setPublishers((prev) => prev.filter((_, i) => i !== idx));
 
-  // media sources (strings) dentro de um publisher
-  const updatePublisherMediaSource = (
+  // media sources (objetos) dentro de um publisher
+  const updatePublisherMediaSourceName = (
     pubIdx: number,
     msIdx: number,
     value: string
@@ -350,7 +379,25 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
           ? {
               ...pub,
               media_sources: pub.media_sources.map((ms, j) =>
-                j === msIdx ? value : ms
+                j === msIdx ? { ...ms, name: value } : ms
+              )
+            }
+          : pub
+      )
+    );
+  // Aplica o resultado de um toggle (PATCH ja feito) na media source local.
+  const setMediaSourceState = (
+    pubIdx: number,
+    msIdx: number,
+    patch: Partial<MediaSourceRow>
+  ) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? {
+              ...pub,
+              media_sources: pub.media_sources.map((ms, j) =>
+                j === msIdx ? { ...ms, ...patch } : ms
               )
             }
           : pub
@@ -360,7 +407,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
     setPublishers((prev) =>
       prev.map((pub, i) =>
         i === pubIdx
-          ? { ...pub, media_sources: [...pub.media_sources, ""] }
+          ? { ...pub, media_sources: [...pub.media_sources, emptyMediaSourceRow()] }
           : pub
       )
     );
@@ -495,7 +542,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       const pub = publishers[i];
       const nomeTrim = pub.nome.trim();
       const cleanMs = pub.media_sources
-        .map((ms) => ms.trim())
+        .map((ms) => ms.name.trim())
         .filter(Boolean);
       // Pula publishers totalmente vazios (sem nome, sem ms, sem payout).
       const hasPayout = pub.payouts.some((po) => po.payout.trim());
@@ -1148,33 +1195,20 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                 </label>
                 <div className="space-y-2">
                   {pub.media_sources.map((ms, msIdx) => (
-                    <div key={msIdx} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={ms}
-                        onChange={(e) =>
-                          updatePublisherMediaSource(
-                            pubIdx,
-                            msIdx,
-                            e.target.value
-                          )
-                        }
-                        placeholder="Ex: mobupps_int"
-                        className={inputCls}
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          removePublisherMediaSource(pubIdx, msIdx)
-                        }
-                        disabled={pub.media_sources.length <= 1}
-                        className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
-                        title="Remover media source"
-                        aria-label="Remover media source"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
+                    <FormMediaSourceRow
+                      key={ms.id || `new-${msIdx}`}
+                      ms={ms}
+                      canRemove={pub.media_sources.length > 1}
+                      onChangeName={(value) =>
+                        updatePublisherMediaSourceName(pubIdx, msIdx, value)
+                      }
+                      onRemove={() =>
+                        removePublisherMediaSource(pubIdx, msIdx)
+                      }
+                      onToggled={(patch) =>
+                        setMediaSourceState(pubIdx, msIdx, patch)
+                      }
+                    />
                   ))}
                   <button
                     type="button"
@@ -1280,6 +1314,168 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         </button>
       </div>
     </form>
+  );
+}
+
+function fmtDateBr(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString("pt-BR");
+}
+
+// Linha de media source dentro do form. Se a ms ja tem id (esta salva), mostra
+// botao Pausar/Reativar que faz PATCH direto no backend e atualiza o estado
+// local. Media source nova (sem id) so tem input + lixeira.
+function FormMediaSourceRow({
+  ms,
+  canRemove,
+  onChangeName,
+  onRemove,
+  onToggled
+}: {
+  ms: MediaSourceRow;
+  canRemove: boolean;
+  onChangeName: (value: string) => void;
+  onRemove: () => void;
+  onToggled: (patch: Partial<MediaSourceRow>) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const hasId = Boolean(ms.id);
+
+  const patch = async (active: boolean, reason?: string) => {
+    if (!ms.id) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(active ? { active } : { active, reason })
+      });
+      toast.success(
+        active ? "Media source reativada." : "Media source desativada."
+      );
+      setConfirmOpen(false);
+      if (active) {
+        onToggled({
+          active: true,
+          deactivated_reason: null,
+          deactivated_at: null
+        });
+      } else {
+        onToggled({
+          active: false,
+          deactivated_reason: reason ?? null,
+          deactivated_at: new Date().toISOString()
+        });
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao atualizar media source.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeBtn = (
+    <button
+      type="button"
+      onClick={onRemove}
+      disabled={!canRemove}
+      className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
+      title="Remover media source"
+      aria-label="Remover media source"
+    >
+      <Trash2 className="h-4 w-4" />
+    </button>
+  );
+
+  // Inativa: input apagado/riscado + badge + justificativa + data, botao Reativar.
+  if (hasId && !ms.active) {
+    return (
+      <div className="flex flex-col gap-1 rounded-lg border border-dashed border-border bg-surface/40 px-2 py-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={ms.name}
+            onChange={(e) => onChangeName(e.target.value)}
+            className={`${inputCls} text-muted line-through opacity-60`}
+          />
+          <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-danger">
+            Inativa
+          </span>
+          <button
+            type="button"
+            onClick={() => patch(true)}
+            disabled={busy}
+            className="inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+            title="Reativar media source"
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+            Reativar
+          </button>
+          {removeBtn}
+        </div>
+        {(ms.deactivated_reason || ms.deactivated_at) && (
+          <p className="pl-1 text-xs text-muted">
+            {ms.deactivated_reason && <span>— {ms.deactivated_reason}</span>}
+            {ms.deactivated_at && (
+              <span className="ml-1">({fmtDateBr(ms.deactivated_at)})</span>
+            )}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        value={ms.name}
+        onChange={(e) => onChangeName(e.target.value)}
+        placeholder="Ex: mobupps_int"
+        className={inputCls}
+      />
+      {hasId ? (
+        <button
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+          disabled={busy}
+          className="inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+          title="Pausar media source"
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Ban className="h-3.5 w-3.5" />
+          )}
+          Pausar
+        </button>
+      ) : (
+        <span
+          className="hidden text-[10px] text-muted sm:inline"
+          title="Salve a campanha pra poder pausar esta media source"
+        >
+          nova
+        </span>
+      )}
+      {removeBtn}
+      {confirmOpen && (
+        <DeactivateMediaSourceModal
+          name={ms.name}
+          submitting={busy}
+          onConfirm={(reason) => patch(false, reason)}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      )}
+    </div>
   );
 }
 
