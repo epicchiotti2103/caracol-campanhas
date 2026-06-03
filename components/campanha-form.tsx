@@ -264,6 +264,13 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       : []
   );
 
+  // Contagem de publishers e PIDs (media sources) — reflete o estado atual do form.
+  const publisherCount = publishers.length;
+  const pidCount = useMemo(
+    () => publishers.reduce((acc, p) => acc + p.media_sources.length, 0),
+    [publishers]
+  );
+
   // Criativo e observacoes
   const [criativo, setCriativo] = useState(initial?.criativo ?? "");
   const [obs, setObs] = useState(initial?.obs ?? "");
@@ -654,6 +661,9 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
             required
             className={inputCls}
           />
+          <p className="mt-1 text-xs text-muted">
+            {publisherCount} publishers · {pidCount} PIDs cadastrados
+          </p>
         </Field>
         <Field label="Status">
           <select

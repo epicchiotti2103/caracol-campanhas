@@ -17,6 +17,8 @@ function todayIso(): string {
  * `deactivated_at` (data EFETIVA da pausa, default hoje). O `deactivated_registered_at`
  * e gravado automaticamente pelo backend (now()), nao tem input aqui.
  */
+const PAUSE_REASONS = ["Fraude em excesso", "Limite budget", "Outro"] as const;
+
 export function DeactivateMediaSourceModal({
   name,
   submitting,
@@ -28,9 +30,14 @@ export function DeactivateMediaSourceModal({
   onConfirm: (reason: string, deactivatedAt: string) => void;
   onCancel: () => void;
 }) {
-  const [reason, setReason] = useState("");
+  const [option, setOption] = useState("");
+  const [otherReason, setOtherReason] = useState("");
   const [deactivatedAt, setDeactivatedAt] = useState(todayIso());
-  const trimmed = reason.trim();
+  const isOther = option === "Outro";
+  const otherTrimmed = otherReason.trim();
+  const finalReason = isOther ? otherTrimmed : option;
+  const canConfirm =
+    !!option && (!isOther || !!otherTrimmed) && !!deactivatedAt;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
@@ -42,14 +49,31 @@ export function DeactivateMediaSourceModal({
           <span className="font-mono text-foreground">{name}</span>. Informe a
           justificativa (obrigatoria).
         </p>
-        <textarea
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          rows={3}
+        <label className="mb-1 block text-xs font-medium text-muted">
+          Motivo da pausa
+        </label>
+        <select
+          value={option}
+          onChange={(e) => setOption(e.target.value)}
           autoFocus
-          placeholder="Ex: fraude detectada, parceiro pausado..."
           className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-        />
+        >
+          <option value="">Selecione um motivo...</option>
+          {PAUSE_REASONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        {isOther && (
+          <textarea
+            value={otherReason}
+            onChange={(e) => setOtherReason(e.target.value)}
+            rows={3}
+            placeholder="Descreva o motivo..."
+            className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          />
+        )}
         <label className="mb-1 block text-xs font-medium text-muted">
           Data da pausa
         </label>
@@ -73,8 +97,8 @@ export function DeactivateMediaSourceModal({
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(trimmed, deactivatedAt)}
-            disabled={submitting || !trimmed || !deactivatedAt}
+            onClick={() => onConfirm(finalReason, deactivatedAt)}
+            disabled={submitting || !canConfirm}
             className="flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
