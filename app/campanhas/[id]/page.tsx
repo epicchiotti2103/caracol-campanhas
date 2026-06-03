@@ -30,6 +30,7 @@ import {
   toMonthString
 } from "@/lib/format";
 import type {
+  AppPlatform,
   Campanha,
   CampanhaApp,
   CampanhaMediaSource,
@@ -340,63 +341,28 @@ function CampanhaView({
 }) {
   return (
     <div className="space-y-6">
+      {/* Identificacao / status no topo */}
       <Section title="Identificacao">
-        <Field label="Codigo">
-          <p className="font-mono text-sm text-foreground">
-            {campanha.codigo || "—"}
-          </p>
-        </Field>
-        <Field label="Nome">
-          <p className="text-sm text-foreground">{campanha.name}</p>
-        </Field>
-        <Field label="Status">
-          <StatusBadge status={campanha.status} />
-        </Field>
-      </Section>
-
-      <Section title="Tipo e budget">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Codigo">
+            <p className="font-mono text-sm text-foreground">
+              {campanha.codigo || "—"}
+            </p>
+          </Field>
+          <Field label="Status">
+            <StatusBadge status={campanha.status} />
+          </Field>
+          <Field label="Nome">
+            <p className="text-sm text-foreground">{campanha.name}</p>
+          </Field>
           <Field label="Tipo">
             <p className="text-sm uppercase text-foreground">
               {campanha.tipo || "—"}
             </p>
           </Field>
-          <Field label="Modo de budget">
+          <Field label="Moeda">
             <p className="text-sm text-foreground">
-              {campanha.budget_mode === "per_event"
-                ? "Por evento"
-                : campanha.budget_mode === "total"
-                ? "Total unico"
-                : "—"}
-            </p>
-          </Field>
-          <Field label="MMP">
-            <p className="text-sm uppercase text-foreground">
-              {campanha.mmp === "adjust"
-                ? "Adjust"
-                : campanha.mmp === "appsflyer"
-                ? "AppsFlyer"
-                : "—"}
-            </p>
-          </Field>
-          <Field label="Parceria Wave">
-            <p className="text-sm text-foreground">
-              {campanha.parceria_wave ? "Sim" : "Nao"}
-            </p>
-          </Field>
-          <Field label="Coleta de dados">
-            <p className="text-sm text-foreground">
-              {campanha.coleta_manual ? "Manual (nao buscar)" : "Automatica"}
-            </p>
-          </Field>
-          <Field label="Timezone">
-            <p className="text-sm text-foreground">
-              {campanha.timezone || "—"}
-            </p>
-          </Field>
-          <Field label="ID externo (api_af)">
-            <p className="font-mono text-sm text-foreground">
-              {campanha.external_id || "—"}
+              {moedaLabel(campanha.moeda)}
             </p>
           </Field>
           <Field label="Mes de referencia">
@@ -405,6 +371,11 @@ function CampanhaView({
             </p>
           </Field>
         </div>
+      </Section>
+
+      {/* Budget logo em seguida — info que o usuario quer ver primeiro */}
+      <Section title="Budget">
+        <BudgetView campanha={campanha} />
       </Section>
 
       <Section title="Periodo">
@@ -416,6 +387,14 @@ function CampanhaView({
             <p className="text-sm text-foreground">{fmtDate(campanha.fim)}</p>
           </Field>
         </div>
+      </Section>
+
+      <Section title="Eventos pagos">
+        <EventosTable
+          eventos={campanha.eventos_pagos}
+          moeda={campanha.moeda}
+          budgetMode={campanha.budget_mode}
+        />
       </Section>
 
       <Section title="App e parceiro">
@@ -431,33 +410,20 @@ function CampanhaView({
               {campanha.plataforma || "—"}
             </p>
           </Field>
-        </div>
-      </Section>
-
-      <Section title="Financeiro">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Budget">
-            <p className="text-sm text-foreground">
-              {fmtBudget(campanha.budget, campanha.moeda)}
-            </p>
-          </Field>
-          <Field label="Moeda">
-            <p className="text-sm text-foreground">
-              {moedaLabel(campanha.moeda)}
-            </p>
-          </Field>
           <Field label="Fluxo">
             <p className="text-sm text-foreground">{campanha.fluxo || "—"}</p>
           </Field>
+          <Field label="Parceria Wave">
+            <p className="text-sm text-foreground">
+              {campanha.parceria_wave ? "Sim" : "Nao"}
+            </p>
+          </Field>
+          <Field label="Coleta de dados">
+            <p className="text-sm text-foreground">
+              {campanha.coleta_manual ? "Manual (nao buscar)" : "Automatica"}
+            </p>
+          </Field>
         </div>
-      </Section>
-
-      <Section title="Eventos pagos">
-        <EventosTable
-          eventos={campanha.eventos_pagos}
-          moeda={campanha.moeda}
-          budgetMode={campanha.budget_mode}
-        />
       </Section>
 
       <Section title="Apps">
@@ -483,6 +449,31 @@ function CampanhaView({
             {campanha.obs || "—"}
           </p>
         </Field>
+      </Section>
+
+      {/* Dados tecnicos no fim do resumo */}
+      <Section title="Tecnico">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="ID externo (api_af)">
+            <p className="font-mono text-sm text-foreground">
+              {campanha.external_id || "—"}
+            </p>
+          </Field>
+          <Field label="Timezone">
+            <p className="text-sm text-foreground">
+              {campanha.timezone || "—"}
+            </p>
+          </Field>
+          <Field label="MMP">
+            <p className="text-sm uppercase text-foreground">
+              {campanha.mmp === "adjust"
+                ? "Adjust"
+                : campanha.mmp === "appsflyer"
+                ? "AppsFlyer"
+                : "—"}
+            </p>
+          </Field>
+        </div>
       </Section>
 
       <Section title="Metadados">
@@ -558,17 +549,181 @@ function fmtDateTime(s: string | null | undefined): string {
   return d.toLocaleString("pt-BR");
 }
 
-function fmtBudget(
-  budget: number | null | undefined,
-  moeda: Moeda | string | null | undefined
-): string {
-  return formatCurrency(budget, moeda);
-}
-
 function moedaLabel(m: Moeda | string | null | undefined): string {
   if (m === "USD") return "USD (U$)";
   if (m === "BRL") return "BRL (R$)";
   return "—";
+}
+
+function budgetModeLabel(
+  mode: Campanha["budget_mode"] | undefined
+): string {
+  switch (mode) {
+    case "total":
+      return "Total da campanha";
+    case "per_event":
+      return "Por evento";
+    case "per_platform":
+      return "Por plataforma (iOS/Android)";
+    default:
+      return "—";
+  }
+}
+
+function platformLabel(p: AppPlatform | string | null | undefined): string {
+  if (p === "ios") return "iOS";
+  if (p === "android") return "Android";
+  return p || "—";
+}
+
+// Exibe o modo de budget + os valores conforme o modo:
+// - total: o budget unico da campanha
+// - per_event: lista de eventos com budget_monthly + total
+// - per_platform: lista de apps por plataforma com budget_monthly + total (soma)
+function BudgetView({ campanha }: { campanha: Campanha }) {
+  const mode = campanha.budget_mode;
+  const moeda = campanha.moeda;
+
+  return (
+    <div className="space-y-4">
+      <Field label="Modo de budget">
+        <p className="text-sm text-foreground">{budgetModeLabel(mode)}</p>
+      </Field>
+
+      {mode === "total" && (
+        <Field label="Budget total">
+          <p className="text-sm font-semibold text-foreground">
+            {formatCurrency(campanha.budget, moeda)}
+          </p>
+        </Field>
+      )}
+
+      {mode === "per_event" && (
+        <BudgetByEvent eventos={campanha.eventos_pagos} moeda={moeda} />
+      )}
+
+      {mode === "per_platform" && (
+        <BudgetByPlatform apps={campanha.apps} moeda={moeda} />
+      )}
+
+      {!mode && (
+        <Field label="Budget total">
+          <p className="text-sm font-semibold text-foreground">
+            {formatCurrency(campanha.budget, moeda)}
+          </p>
+        </Field>
+      )}
+    </div>
+  );
+}
+
+function BudgetByEvent({
+  eventos,
+  moeda
+}: {
+  eventos: Campanha["eventos_pagos"];
+  moeda: Moeda | string | null | undefined;
+}) {
+  if (!eventos || eventos.length === 0) {
+    return <p className="text-sm text-muted">Sem eventos cadastrados.</p>;
+  }
+  const total = eventos.reduce((acc, ev) => acc + (ev.budget_monthly ?? 0), 0);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-background/40">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Evento
+            </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Budget mensal
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {eventos.map((ev, i) => (
+            <tr
+              key={`${ev.nome}-${i}`}
+              className={i < eventos.length - 1 ? "border-b border-border" : ""}
+            >
+              <td className="px-3 py-2 text-foreground">{ev.nome}</td>
+              <td className="px-3 py-2 text-right font-mono text-foreground">
+                {formatCurrency(ev.budget_monthly, moeda)}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t border-border bg-background/40">
+            <td className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Total
+            </td>
+            <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
+              {formatCurrency(total, moeda)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BudgetByPlatform({
+  apps,
+  moeda
+}: {
+  apps: CampanhaApp[] | undefined;
+  moeda: Moeda | string | null | undefined;
+}) {
+  if (!apps || apps.length === 0) {
+    return <p className="text-sm text-muted">Sem apps cadastrados.</p>;
+  }
+  const total = apps.reduce((acc, a) => acc + (a.budget_monthly ?? 0), 0);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-background/40">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              Plataforma
+            </th>
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+              App
+            </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
+              Budget mensal
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {apps.map((a, i) => (
+            <tr
+              key={a.id || `${a.app_id}-${i}`}
+              className={i < apps.length - 1 ? "border-b border-border" : ""}
+            >
+              <td className="px-3 py-2 text-foreground">
+                {platformLabel(a.platform)}
+              </td>
+              <td className="px-3 py-2 text-muted">{a.name}</td>
+              <td className="px-3 py-2 text-right font-mono text-foreground">
+                {formatCurrency(a.budget_monthly, moeda)}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t border-border bg-background/40">
+            <td
+              className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
+              colSpan={2}
+            >
+              Total
+            </td>
+            <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground">
+              {formatCurrency(total, moeda)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function EventosTable({
