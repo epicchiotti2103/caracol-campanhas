@@ -11,7 +11,9 @@ import {
   Info,
   Plus,
   X,
-  Trash2
+  Trash2,
+  Download,
+  Archive
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
@@ -43,7 +45,9 @@ import type {
   CampanhaPublishersResponse,
   Fechamento,
   MetricPlatform,
-  Moeda
+  Moeda,
+  RawArchivesResponse,
+  RawArchiveWeek
 } from "@/types";
 
 const PLATFORM_ORDER: MetricPlatform[] = ["consolidado", "android", "ios"];
@@ -71,6 +75,9 @@ function DesempenhoView() {
   const [manualOpen, setManualOpen] = useState(false);
   const [fechamentoOpen, setFechamentoOpen] = useState(false);
   const [fechamento, setFechamento] = useState<Fechamento | null>(null);
+  const [rawArchives, setRawArchives] = useState<RawArchivesResponse | null>(
+    null
+  );
 
   const loadAll = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -123,6 +130,26 @@ function DesempenhoView() {
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // Brutos arquivados (AppsFlyer): chamada independente, falha silenciosa.
+  // Nao bloqueia o carregamento principal — a secao so some/fica vazia em erro.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = (await apiFetch(
+          `/campanhas/${id}/raw-archives`
+        )) as RawArchivesResponse;
+        if (!cancelled) setRawArchives(r);
+      } catch {
+        if (!cancelled) setRawArchives(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const platformsOrdered: { platform: MetricPlatform; row: CampanhaMetricsRow }[] =
@@ -258,6 +285,8 @@ function DesempenhoView() {
             data={publishers}
             moeda={campanha.moeda}
           />
+
+          <RawArchivesSection data={rawArchives} />
 
           {manualOpen && (
             <ManualMetricsModal
@@ -526,6 +555,84 @@ function PublishersSection({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------- Brutos arquivados (AppsFlyer) ----------
+
+function RawArchivesSection({
+  data
+}: {
+  data: RawArchivesResponse | null;
+}) {
+  const weeks: RawArchiveWeek[] = data?.weeks ?? [];
+
+  return (
+    <section className="mt-6 rounded-xl border border-border bg-surface p-5">
+      <div className="mb-4 flex items-center gap-2.5">
+        <Archive className="h-4 w-4 text-primary" />
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-primary">
+            Brutos arquivados (AppsFlyer)
+          </h2>
+          <p className="mt-0.5 text-xs text-muted">
+            CSVs brutos arquivados semanalmente pelo api_af. Os links de download
+            expiram em poucos minutos — baixe na hora.
+          </p>
+        </div>
+      </div>
+
+      {weeks.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-background p-8 text-center">
+          <Info className="mx-auto mb-3 h-8 w-8 text-muted opacity-50" />
+          <p className="text-sm text-muted">Nenhum dado bruto arquivado ainda.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {weeks.map((wk) => (
+            <div
+              key={wk.week}
+              className="rounded-lg border border-border bg-background p-4"
+            >
+              <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-primary">
+                  {wk.week}
+                </span>
+                <span className="text-sm text-foreground">
+                  {fmtDate(wk.date_from)}
+                  {wk.date_to && wk.date_to !== wk.date_from
+                    ? ` — ${fmtDate(wk.date_to)}`
+                    : ""}
+                </span>
+              </div>
+
+              {wk.files.length === 0 ? (
+                <p className="text-xs text-muted">Sem arquivos nesta semana.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {wk.files.map((file, i) => (
+                    <a
+                      key={`${file.platform}-${file.key}-${i}`}
+                      href={file.url}
+                      download={file.filename}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={file.filename}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/10"
+                    >
+                      <Download className="h-3.5 w-3.5 text-muted" />
+                      <span className="font-mono">
+                        {file.platform} · {file.key}
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </section>
