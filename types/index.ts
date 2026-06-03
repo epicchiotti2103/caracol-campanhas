@@ -7,7 +7,7 @@ export type Moeda = "BRL" | "USD";
 
 export type CampanhaTipo = "ua" | "rtg";
 
-export type CampanhaBudgetMode = "total" | "per_event";
+export type CampanhaBudgetMode = "total" | "per_event" | "per_platform";
 
 export type AppPlatform = "android" | "ios";
 
@@ -37,6 +37,8 @@ export interface CampanhaApp {
   platform: AppPlatform;
   p360_enabled?: boolean;
   only_primary_attribution?: boolean;
+  /** Budget mensal do app — usado quando budget_mode === 'per_platform'. */
+  budget_monthly?: number | null;
   ordem?: number;
 }
 
@@ -337,4 +339,44 @@ export interface FechamentoSummary {
   spend_final_total_brl: number;
   spend_final_total_usd: number;
   by_moeda: Record<string, number>;
+}
+
+// ---------- Brutos arquivados (AppsFlyer) ----------
+
+/** Tipo de relatorio bruto arquivado no Supabase Storage pelo api_af. */
+export type RawArchiveKey =
+  | "installs"
+  | "events"
+  | "clicks"
+  | "blocked_installs"
+  | "blocked_events"
+  | "blocked_clicks"
+  | "post_attribution_installs"
+  | "post_attribution_events";
+
+export type RawArchivePlatform = "android" | "ios" | "consolidado";
+
+/** Um arquivo bruto (CSV.gz) com link assinado de download. */
+export interface RawArchiveFile {
+  platform: RawArchivePlatform | string;
+  key: RawArchiveKey | string;
+  filename: string;
+  /** Signed URL — expira em ~15 min. */
+  url: string;
+}
+
+/** Brutos de uma semana (ISO week). */
+export interface RawArchiveWeek {
+  week: string;
+  date_from: string;
+  date_to: string;
+  files: RawArchiveFile[];
+}
+
+/** Response do GET /campanhas/{id}/raw-archives. */
+export interface RawArchivesResponse {
+  external_id: string | null;
+  tipo: string | null;
+  /** Mais recente primeiro; pode vir vazio. */
+  weeks: RawArchiveWeek[];
 }

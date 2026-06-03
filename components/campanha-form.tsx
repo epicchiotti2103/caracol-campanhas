@@ -78,6 +78,7 @@ interface AppRow {
   platform: AppPlatform;
   p360_enabled: boolean;
   only_primary_attribution: boolean;
+  budget_monthly: string; // mascara PT-BR; usado no modo per_platform
 }
 
 // PO por evento dentro de um publisher: keyado por evento_nome (string).
@@ -165,7 +166,9 @@ function appToRow(a: CampanhaApp): AppRow {
     app_id: a.app_id ?? "",
     platform: a.platform ?? "android",
     p360_enabled: !!a.p360_enabled,
-    only_primary_attribution: a.only_primary_attribution !== false
+    only_primary_attribution: a.only_primary_attribution !== false,
+    budget_monthly:
+      a.budget_monthly != null ? formatNumberPtBr(a.budget_monthly) : ""
   };
 }
 
@@ -350,7 +353,8 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         app_id: "",
         platform: "android",
         p360_enabled: false,
-        only_primary_attribution: true
+        only_primary_attribution: true,
+        budget_monthly: ""
       }
     ]);
   const removeApp = (idx: number) =>
@@ -465,9 +469,9 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       return;
     }
 
-    // Parse budget
+    // Parse budget total — nao se aplica no modo Por plataforma (vai null).
     let parsedBudget: number | null = null;
-    if (budget.trim()) {
+    if (budgetMode !== "per_platform" && budget.trim()) {
       parsedBudget = parseNumberPtBr(budget);
       if (Number.isNaN(parsedBudget) || parsedBudget < 0) {
         setError("Budget invalido. Use um numero >= 0.");
@@ -529,14 +533,39 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
         setError(`App ${i + 1}: preencha nome e app_id (ou remova a linha).`);
         return;
       }
+
+      // Budget mensal por app: obrigatorio (> 0) no modo Por plataforma.
+      let appBudgetMonthly: number | null = null;
+      const rawBudget = row.budget_monthly.trim();
+      if (rawBudget) {
+        appBudgetMonthly = parseNumberPtBr(rawBudget);
+        if (Number.isNaN(appBudgetMonthly) || appBudgetMonthly < 0) {
+          setError(`App ${i + 1}: budget mensal invalido. Use um numero >= 0.`);
+          return;
+        }
+      }
+      if (
+        budgetMode === "per_platform" &&
+        (appBudgetMonthly == null || appBudgetMonthly <= 0)
+      ) {
+        setError("Informe o budget de cada app no modo Por plataforma.");
+        return;
+      }
+
       cleanApps.push({
         name: nameTrim,
         app_id: appIdTrim,
         platform: row.platform,
         p360_enabled: row.p360_enabled,
         only_primary_attribution: row.only_primary_attribution,
+        budget_monthly: appBudgetMonthly,
         ordem: i
       });
+    }
+
+    if (budgetMode === "per_platform" && cleanApps.length === 0) {
+      setError("Informe o budget de cada app no modo Por plataforma.");
+      return;
     }
 
     // Publishers — cada um com media sources (envia string[] de nomes; o backend
@@ -810,7 +839,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
         <Field
           label="Modo de budget"
-          hint="Total: um pote unico pro produto. Por evento: cada evento pago tem seu proprio orcamento."
+          hint="Total: um pote unico pro produto. Por evento: cada evento pago tem seu proprio orcamento. Por plataforma: cada app (iOS/Android) tem seu budget mensal."
         >
           <div className="flex gap-2">
             <button
@@ -822,7 +851,7 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                   : "border-border bg-background text-muted hover:text-foreground"
               }`}
             >
-              Budget total unico
+              Total da campanha
             </button>
             <button
               type="button"
@@ -833,7 +862,18 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                   : "border-border bg-background text-muted hover:text-foreground"
               }`}
             >
-              Budget por evento
+              Por evento
+            </button>
+            <button
+              type="button"
+              onClick={() => setBudgetMode("per_platform")}
+              className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                budgetMode === "per_platform"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted hover:text-foreground"
+              }`}
+            >
+              Por plataforma (iOS/Android)
             </button>
           </div>
         </Field>
@@ -922,11 +962,19 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
       <Section title="Financeiro">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr,140px,1fr]">
-          <Field label="Budget" hint={`em ${moedaSym}`}>
+          <Field
+            label="Budget"
+            hint={
+              budgetMode === "per_platform"
+                ? "nao se aplica no modo Por plataforma — defina por app abaixo"
+                : `em ${moedaSym}`
+            }
+          >
             <PtBrCurrencyInput
-              value={budget}
+              value={budgetMode === "per_platform" ? "" : budget}
               onChange={setBudget}
               prefix={moedaSym}
+              disabled={budgetMode === "per_platform"}
             />
           </Field>
           <Field label="Moeda">
@@ -1030,13 +1078,18 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
 
       <Section
         title="Apps"
-        hint="Apps que api_af deve trackear (Android / iOS)"
+        hint={
+          budgetMode === "per_platform"
+            ? `Cada app tem seu budget mensal (em ${moedaSym})`
+            : "Apps que api_af deve trackear (Android / iOS)"
+        }
       >
         <div className="space-y-3">
           {apps.length === 0 && (
             <p className="text-xs text-muted">
-              Nenhum app cadastrado. Para que o robo api_af envie metrics,
-              cadastre ao menos 1 plataforma.
+              {budgetMode === "per_platform"
+                ? "Modo Por plataforma exige ao menos 1 app com budget mensal. Adicione abaixo."
+                : "Nenhum app cadastrado. Para que o robo api_af envie metrics, cadastre ao menos 1 plataforma."}
             </p>
           )}
           {apps.map((row, idx) => (
@@ -1122,6 +1175,16 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
                   </label>
                 </div>
               </div>
+              {budgetMode === "per_platform" && (
+                <Field label="Budget mensal" hint={`em ${moedaSym}`}>
+                  <PtBrCurrencyInput
+                    value={row.budget_monthly}
+                    onChange={(v) => updateApp(idx, { budget_monthly: v })}
+                    prefix={moedaSym}
+                    aria-label={`Budget mensal app ${idx + 1}`}
+                  />
+                </Field>
+              )}
             </div>
           ))}
           <button
@@ -1523,11 +1586,13 @@ function PtBrCurrencyInput({
   value,
   onChange,
   prefix,
+  disabled,
   "aria-label": ariaLabel
 }: {
   value: string;
   onChange: (v: string) => void;
   prefix: string;
+  disabled?: boolean;
   "aria-label"?: string;
 }) {
   return (
@@ -1543,7 +1608,8 @@ function PtBrCurrencyInput({
         onBlur={(e) => onChange(blurFormatNumberPtBr(e.target.value))}
         placeholder="0,00"
         aria-label={ariaLabel}
-        className={`${inputCls} pl-9`}
+        disabled={disabled}
+        className={`${inputCls} pl-9 disabled:cursor-not-allowed disabled:opacity-40`}
       />
     </div>
   );
