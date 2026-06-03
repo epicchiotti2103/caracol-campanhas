@@ -117,6 +117,14 @@ export interface Campanha {
   // mesmo sendo mmp=appsflyer. Libera o form de metrics manual.
   coleta_manual?: boolean | null;
 
+  // Pausa da campanha INTEIRA (status='pausada' via POST /{id}/pause).
+  // paused_at = data EFETIVA da pausa (informada, default hoje);
+  // paused_registered_at = registro automatico (now() no backend, read-only);
+  // paused_reason = justificativa (select Fraude/Budget/Outro -> texto livre).
+  paused_at?: string | null;
+  paused_registered_at?: string | null;
+  paused_reason?: string | null;
+
   // Eventos pagos (backend usa esse nome). Moeda vem da campanha.
   eventos_pagos?: CampanhaEvento[];
 
@@ -298,6 +306,11 @@ export interface Fechamento {
   publishers: FechamentoPublisher[];
   // PO acordado do cadastro (referencia; casa por nome com `publishers`).
   publishers_cadastrados?: FechamentoPublisherCadastrado[];
+  // Pausa da campanha inteira (espelha os campos de `Campanha`). Aviso no modal.
+  campanha_paused?: boolean;
+  paused_at?: string | null;
+  paused_registered_at?: string | null;
+  paused_reason?: string | null;
 }
 
 /** Body do POST /campanhas/{id}/fechamento?month=YYYY-MM. */

@@ -19,6 +19,8 @@ import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
 import { CampanhaForm } from "@/components/campanha-form";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
+import { ReasonDateModal } from "@/components/reason-date-modal";
+import { Pause, Play } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import {
@@ -55,6 +57,9 @@ function CampanhaDetail() {
   const [editing, setEditing] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [unpausing, setUnpausing] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -115,6 +120,38 @@ function CampanhaDetail() {
     }
   };
 
+  const handlePause = async (reason: string, pausedAt: string) => {
+    if (!campanha) return;
+    setPausing(true);
+    try {
+      await apiFetch(`/campanhas/${campanha.id}/pause`, {
+        method: "POST",
+        body: JSON.stringify({ reason, paused_at: pausedAt })
+      });
+      toast.success("Campanha pausada.");
+      setPauseOpen(false);
+      await reloadCampanha();
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao pausar campanha.");
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const handleUnpause = async () => {
+    if (!campanha) return;
+    setUnpausing(true);
+    try {
+      await apiFetch(`/campanhas/${campanha.id}/unpause`, { method: "POST" });
+      toast.success("Campanha reativada.");
+      await reloadCampanha();
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao reativar campanha.");
+    } finally {
+      setUnpausing(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
@@ -160,6 +197,31 @@ function CampanhaDetail() {
               </h1>
             </div>
             <div className="flex items-center gap-2">
+              {!editing &&
+                (campanha.status === "pausada" ? (
+                  <button
+                    type="button"
+                    onClick={handleUnpause}
+                    disabled={unpausing}
+                    className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                  >
+                    {unpausing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                    Reativar campanha
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPauseOpen(true)}
+                    className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-sm font-semibold text-danger transition-colors hover:bg-danger/20"
+                  >
+                    <Pause className="h-4 w-4" />
+                    Pausar campanha
+                  </button>
+                ))}
               {!editing && (
                 <>
                   <button
@@ -200,10 +262,48 @@ function CampanhaDetail() {
             </div>
           </div>
 
+          {campanha.status === "pausada" && (
+            <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-danger/30 bg-danger/10 p-3">
+              <Pause className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+              <div className="text-sm text-danger">
+                <p>
+                  Campanha pausada
+                  {campanha.paused_at && ` em ${fmtDate(campanha.paused_at)}`}
+                  {campanha.paused_reason && ` — ${campanha.paused_reason}`}
+                </p>
+                {campanha.paused_registered_at && (
+                  <p className="mt-0.5 text-xs text-danger/70">
+                    registrado em {fmtDate(campanha.paused_registered_at)}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {editing ? (
             <CampanhaForm initial={campanha} campanhaId={campanha.id} />
           ) : (
             <CampanhaView campanha={campanha} onReload={reloadCampanha} />
+          )}
+
+          {pauseOpen && (
+            <ReasonDateModal
+              title="Pausar campanha"
+              description={
+                <>
+                  Pausar a campanha{" "}
+                  <span className="font-medium text-foreground">
+                    {campanha.name}
+                  </span>{" "}
+                  inteira. Informe o motivo (obrigatorio) e a data da pausa.
+                </>
+              }
+              confirmLabel="Pausar campanha"
+              confirmVariant="danger"
+              submitting={pausing}
+              onConfirm={handlePause}
+              onCancel={() => setPauseOpen(false)}
+            />
           )}
 
           {duplicateOpen && (

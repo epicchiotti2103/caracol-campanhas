@@ -84,11 +84,13 @@ Vive no Tracker — qualquer rota nova em `/api/v1/campanhas/*` e trabalho do su
 
 Endpoints principais:
 - `GET /api/v1/campanhas` — lista (cada item inclui `eventos_pagos`; **nao** traz `apps`/`publishers` — payload morto na listagem, so no detalhe)
-- `GET /api/v1/campanhas/{id}` — detalhe completo (inclui `apps` + `publishers`)
+- `GET /api/v1/campanhas/{id}` — detalhe completo (inclui `apps` + `publishers` + `paused_at`/`paused_registered_at`/`paused_reason`)
 - `GET /api/v1/campanhas/{id}/publishers` — `{items, total}` dos publishers (substituiu o removido `/{id}/media-sources`). Cada media source vem como `{id, name, active, deactivated_reason, deactivated_at, deactivated_registered_at}`
 - `PATCH /api/v1/campanhas/publishers/media-sources/{ms_id}` — ativa/desativa uma media source (PID). Body `{active, reason?, deactivated_at?}`: desativar EXIGE `reason` (400 se vazio) e aceita `deactivated_at` (data efetiva da pausa em ISO `YYYY-MM-DD`; se omitido o backend usa hoje), o `deactivated_registered_at` e gravado automaticamente (now()); reativar limpa `reason`+ambas as datas. Usado pelo toggle na tela de detalhe (modal de justificativa obrigatoria + campo data da pausa)
 - `POST /api/v1/campanhas` — cria. Body: campos da campanha + `eventos_pagos: [{nome, target_cpa?, budget_monthly?}]` + `apps: [{name, app_id, platform, p360_enabled, only_primary_attribution, ordem}]` + `publishers: [{nome, media_sources: [str], payouts: [{evento_nome, payout}], moeda}]` (`moeda` BRL/USD, default USD)
 - `PATCH /api/v1/campanhas/{id}` — atualiza; arrays (`eventos_pagos`/`apps`/`publishers`) fazem replace total quando enviados
+- `POST /api/v1/campanhas/{id}/pause` — pausa a campanha inteira (status → `pausada`). Body `{reason, paused_at?}` (`paused_at` = data efetiva ISO `YYYY-MM-DD`, default hoje; `paused_registered_at` gravado automatico). Botao "Pausar campanha" no detalhe abre modal motivo+data (`ReasonDateModal`)
+- `POST /api/v1/campanhas/{id}/unpause` — reativa (status → `ativa`), limpa os 3 campos de pausa. Botao "Reativar campanha" no detalhe
 - `DELETE /api/v1/campanhas/{id}` — soft delete (status `encerrada`)
 - `GET /api/v1/campanhas/{id}/metrics/latest` — snapshot mais recente por plataforma (`android`/`ios`/`consolidado`)
 - `GET /api/v1/campanhas/{id}/metrics/history?days=N` — serie diaria (default 30, max 180). Usada pelo grafico de /desempenho

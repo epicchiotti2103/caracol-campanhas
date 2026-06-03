@@ -429,6 +429,22 @@ export function CampanhaFechamentoModal({
             <ErrorBox text={error} />
           ) : (
             <div className="space-y-6">
+              {fechamento?.campanha_paused && (
+                <div className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+                  <p className="font-medium">
+                    ⚠ Campanha inteira foi pausada
+                    {fechamento.paused_at &&
+                      ` em ${fmtDate(fechamento.paused_at)}`}
+                    {fechamento.paused_reason &&
+                      ` — ${fechamento.paused_reason}`}
+                    {fechamento.paused_registered_at &&
+                      ` (registrado ${fmtDate(
+                        fechamento.paused_registered_at
+                      )})`}
+                  </p>
+                </div>
+              )}
+
               {/* Section 1: Dados do fechamento */}
               <section className="space-y-4">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-primary">
