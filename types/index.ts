@@ -47,13 +47,25 @@ export interface CampanhaPublisherPayout {
 }
 
 /**
+ * Media source (PID) de um publisher. Tem estado ativo/inativo: ao desativar
+ * exige justificativa (`deactivated_reason`) e guarda a data (`deactivated_at`).
+ */
+export interface CampanhaMediaSource {
+  id: string;
+  name: string;
+  active: boolean;
+  deactivated_reason: string | null;
+  deactivated_at: string | null;
+}
+
+/**
  * Publisher cadastrado na campanha. Cada publisher tem suas media sources
- * (strings, ex: "googleadwords_int") e o PO por evento (`payouts`, casado por nome).
+ * (objetos com estado, ex: "googleadwords_int") e o PO por evento (`payouts`, casado por nome).
  */
 export interface CampanhaPublisher {
   id?: string | null;
   nome: string;
-  media_sources: string[];
+  media_sources: CampanhaMediaSource[];
   payouts: CampanhaPublisherPayout[];
   // Moeda do PO desse publisher (aplica a todos os POs dele). Default 'USD'.
   moeda: Moeda;
@@ -259,7 +271,7 @@ export interface FechamentoPublisher {
  */
 export interface FechamentoPublisherCadastrado {
   publisher_name: string;
-  media_sources: string[];
+  media_sources: CampanhaMediaSource[];
   po_acordado: CampanhaPublisherPayout[];
   // Moeda do PO acordado desse publisher (cadastro). Default 'USD'.
   moeda: Moeda;

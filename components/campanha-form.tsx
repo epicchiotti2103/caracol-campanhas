@@ -111,12 +111,14 @@ function eventoToRow(e: CampanhaEvento): EventoRow {
 }
 
 function publisherToRow(p: CampanhaPublisher): PublisherRow {
+  // media_sources vem como objetos {id, name, active, ...} — o form so edita o nome.
+  const msNames =
+    Array.isArray(p.media_sources) && p.media_sources.length > 0
+      ? p.media_sources.map((ms) => ms?.name ?? "")
+      : [""];
   return {
     nome: p.nome ?? "",
-    media_sources:
-      Array.isArray(p.media_sources) && p.media_sources.length > 0
-        ? [...p.media_sources]
-        : [""],
+    media_sources: msNames,
     payouts: (p.payouts ?? []).map((po) => ({
       evento_nome: po.evento_nome ?? "",
       payout: po.payout != null ? formatNumberPtBr(po.payout) : ""
@@ -480,8 +482,15 @@ export function CampanhaForm({ initial, campanhaId }: CampanhaFormProps) {
       });
     }
 
-    // Publishers — cada um com media sources (strings) + PO por evento
-    const cleanPublishers: CampanhaPublisher[] = [];
+    // Publishers — cada um com media sources (envia string[] de nomes; o backend
+    // reconcilia active/reason/data por nome) + PO por evento.
+    const cleanPublishers: {
+      nome: string;
+      media_sources: string[];
+      payouts: { evento_nome: string; payout: number | null }[];
+      moeda: Moeda;
+      ordem: number;
+    }[] = [];
     for (let i = 0; i < publishers.length; i++) {
       const pub = publishers[i];
       const nomeTrim = pub.nome.trim();

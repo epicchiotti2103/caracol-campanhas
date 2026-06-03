@@ -10,7 +10,9 @@ import {
   Pencil,
   X,
   LineChart,
-  Copy
+  Copy,
+  Ban,
+  RotateCcw
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -27,6 +29,7 @@ import {
 import type {
   Campanha,
   CampanhaApp,
+  CampanhaMediaSource,
   CampanhaPublisher,
   Moeda
 } from "@/types";
@@ -71,6 +74,17 @@ function CampanhaDetail() {
       cancelled = true;
     };
   }, [id]);
+
+  // Recarrega a campanha sem mexer no spinner de pagina inteira (usado apos toggle de media source).
+  const reloadCampanha = async () => {
+    if (!id) return;
+    try {
+      const res: Campanha = await apiFetch(`/campanhas/${id}`);
+      setCampanha(res);
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao recarregar campanha.");
+    }
+  };
 
   const handleDuplicate = async () => {
     if (!campanha) return;
@@ -188,7 +202,7 @@ function CampanhaDetail() {
           {editing ? (
             <CampanhaForm initial={campanha} campanhaId={campanha.id} />
           ) : (
-            <CampanhaView campanha={campanha} />
+            <CampanhaView campanha={campanha} onReload={reloadCampanha} />
           )}
 
           {duplicateOpen && (
@@ -206,7 +220,13 @@ function CampanhaDetail() {
   );
 }
 
-function CampanhaView({ campanha }: { campanha: Campanha }) {
+function CampanhaView({
+  campanha,
+  onReload
+}: {
+  campanha: Campanha;
+  onReload: () => Promise<void> | void;
+}) {
   return (
     <div className="space-y-6">
       <Section title="Identificacao">
@@ -337,6 +357,7 @@ function CampanhaView({ campanha }: { campanha: Campanha }) {
         <PublishersTable
           publishers={campanha.publishers}
           moeda={campanha.moeda}
+          onReload={onReload}
         />
       </Section>
 
@@ -635,11 +656,13 @@ function DuplicateModal({
 
 function PublishersTable({
   publishers,
-  moeda
+  moeda,
+  onReload
 }: {
   publishers: CampanhaPublisher[] | undefined;
   // Moeda da campanha — usada so como fallback quando o publisher nao tem moeda.
   moeda: Moeda | string | null | undefined;
+  onReload: () => Promise<void> | void;
 }) {
   if (!publishers || publishers.length === 0) {
     return <p className="text-sm text-muted">—</p>;
@@ -666,14 +689,13 @@ function PublishersTable({
               Media sources
             </p>
             {pub.media_sources && pub.media_sources.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-col gap-2">
                 {pub.media_sources.map((ms, j) => (
-                  <span
-                    key={`${ms}-${j}`}
-                    className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs text-foreground"
-                  >
-                    {ms}
-                  </span>
+                  <MediaSourceRow
+                    key={ms.id || `${ms.name}-${j}`}
+                    ms={ms}
+                    onReload={onReload}
+                  />
                 ))}
               </div>
             ) : (
@@ -726,6 +748,152 @@ function PublishersTable({
         </div>
         );
       })}
+    </div>
+  );
+}
+
+function MediaSourceRow({
+  ms,
+  onReload
+}: {
+  ms: CampanhaMediaSource;
+  onReload: () => Promise<void> | void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const patch = async (active: boolean, reason?: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(active ? { active } : { active, reason })
+      });
+      toast.success(active ? "Media source reativada." : "Media source desativada.");
+      setConfirmOpen(false);
+      await onReload();
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao atualizar media source.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (ms.active) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs text-foreground">
+          {ms.name}
+        </span>
+        <button
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+          title="Desativar media source"
+        >
+          {busy ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Ban className="h-3 w-3" />
+          )}
+          Desativar
+        </button>
+        {confirmOpen && (
+          <DeactivateMediaSourceModal
+            name={ms.name}
+            submitting={busy}
+            onConfirm={(reason) => patch(false, reason)}
+            onCancel={() => setConfirmOpen(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border bg-surface/40 px-2 py-1">
+      <span className="font-mono text-xs text-muted line-through">{ms.name}</span>
+      <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-danger">
+        Inativa
+      </span>
+      {ms.deactivated_reason && (
+        <span className="text-xs text-muted">— {ms.deactivated_reason}</span>
+      )}
+      {ms.deactivated_at && (
+        <span className="text-xs text-muted">({fmtDate(ms.deactivated_at)})</span>
+      )}
+      <button
+        type="button"
+        onClick={() => patch(true)}
+        disabled={busy}
+        className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+        title="Reativar media source"
+      >
+        {busy ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <RotateCcw className="h-3 w-3" />
+        )}
+        Reativar
+      </button>
+    </div>
+  );
+}
+
+function DeactivateMediaSourceModal({
+  name,
+  submitting,
+  onConfirm,
+  onCancel
+}: {
+  name: string;
+  submitting: boolean;
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const trimmed = reason.trim();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="mb-2 text-base font-semibold text-foreground">
+          Desativar media source
+        </h3>
+        <p className="mb-4 text-sm text-muted">
+          Desativar{" "}
+          <span className="font-mono text-foreground">{name}</span>. Informe a
+          justificativa (obrigatoria).
+        </p>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={3}
+          autoFocus
+          placeholder="Ex: fraude detectada, parceiro pausado..."
+          className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(trimmed)}
+            disabled={submitting || !trimmed}
+            className="flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            Desativar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

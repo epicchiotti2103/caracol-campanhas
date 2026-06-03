@@ -640,6 +640,11 @@ export function CampanhaFechamentoModal({
                                 placeholder="Ex: googleadwords_int"
                                 className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                               />
+                              <InactiveMediaSources
+                                cadastrado={poAcordadoByPublisher.get(
+                                  p.publisher_name.trim().toLowerCase()
+                                )}
+                              />
                             </td>
                             <td className="px-3 py-2 text-left text-xs text-muted">
                               {formatPoAcordado(p.publisher_name)}
@@ -830,4 +835,52 @@ function fmtDateTime(s: string | null | undefined): string {
   } catch {
     return s;
   }
+}
+
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return "";
+  try {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+  } catch {
+    return s;
+  }
+}
+
+/** Destaca as media sources INATIVAS de um publisher cadastrado no fechamento. */
+function InactiveMediaSources({
+  cadastrado
+}: {
+  cadastrado: FechamentoPublisherCadastrado | undefined;
+}) {
+  const inativas = (cadastrado?.media_sources || []).filter(
+    (ms) => ms && ms.active === false
+  );
+  if (inativas.length === 0) return null;
+  return (
+    <div className="mt-1.5 space-y-1">
+      {inativas.map((ms) => (
+        <div
+          key={ms.id || ms.name}
+          className="flex flex-wrap items-center gap-1.5 text-[11px] leading-tight"
+        >
+          <span className="font-mono text-muted line-through">{ms.name}</span>
+          <span className="rounded bg-danger/10 px-1 py-0.5 font-semibold uppercase tracking-wider text-danger">
+            inativa
+          </span>
+          {ms.deactivated_reason && (
+            <span className="text-muted">— {ms.deactivated_reason}</span>
+          )}
+          {ms.deactivated_at && (
+            <span className="text-muted">({fmtDate(ms.deactivated_at)})</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
