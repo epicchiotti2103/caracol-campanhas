@@ -344,7 +344,7 @@ function CampanhaRow({
         <p className="font-medium text-foreground">{campanha.name}</p>
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-foreground">
-        {fmtBudget(campanha.budget, campanha.moeda)}
+        {fmtBudget(campanha.budget_total ?? campanha.budget, campanha.moeda)}
       </td>
       <td
         className="px-4 py-4 text-muted"

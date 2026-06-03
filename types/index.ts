@@ -99,6 +99,10 @@ export interface Campanha {
 
   // Financeiro
   budget?: number | null;
+  // Budget efetivo por modo (vem da listagem do backend): soma das plataformas
+  // no per_platform, soma dos eventos no per_event, ou o budget total. Pode ser
+  // null se o backend ainda nao retorna — nesse caso cai no fallback `budget`.
+  budget_total?: number | null;
   moeda?: Moeda | string | null;
   fluxo?: string | null;
 
