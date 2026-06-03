@@ -3,10 +3,19 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
+function todayIso(): string {
+  // YYYY-MM-DD no fuso local (input type="date" usa esse formato)
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
 /**
  * Modal de justificativa OBRIGATORIA pra desativar uma media source (PID).
  * Compartilhado entre a tela de detalhe (PublishersTable, modo leitura) e o
- * form de edicao (CampanhaForm). O backend exige `reason` ao desativar.
+ * form de edicao (CampanhaForm). O backend exige `reason` ao desativar e aceita
+ * `deactivated_at` (data EFETIVA da pausa, default hoje). O `deactivated_registered_at`
+ * e gravado automaticamente pelo backend (now()), nao tem input aqui.
  */
 export function DeactivateMediaSourceModal({
   name,
@@ -16,10 +25,11 @@ export function DeactivateMediaSourceModal({
 }: {
   name: string;
   submitting: boolean;
-  onConfirm: (reason: string) => void;
+  onConfirm: (reason: string, deactivatedAt: string) => void;
   onCancel: () => void;
 }) {
   const [reason, setReason] = useState("");
+  const [deactivatedAt, setDeactivatedAt] = useState(todayIso());
   const trimmed = reason.trim();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -40,6 +50,18 @@ export function DeactivateMediaSourceModal({
           placeholder="Ex: fraude detectada, parceiro pausado..."
           className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
         />
+        <label className="mb-1 block text-xs font-medium text-muted">
+          Data da pausa
+        </label>
+        <input
+          type="date"
+          value={deactivatedAt}
+          onChange={(e) => setDeactivatedAt(e.target.value)}
+          className="mb-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+        />
+        <p className="mb-4 text-xs text-muted">
+          Registrado automaticamente na data de hoje.
+        </p>
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -51,8 +73,8 @@ export function DeactivateMediaSourceModal({
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(trimmed)}
-            disabled={submitting || !trimmed}
+            onClick={() => onConfirm(trimmed, deactivatedAt)}
+            disabled={submitting || !trimmed || !deactivatedAt}
             className="flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}

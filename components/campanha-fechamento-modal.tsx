@@ -877,7 +877,14 @@ function InactiveMediaSources({
             <span className="text-muted">— {ms.deactivated_reason}</span>
           )}
           {ms.deactivated_at && (
-            <span className="text-muted">({fmtDate(ms.deactivated_at)})</span>
+            <span className="text-muted">
+              Pausado em {fmtDate(ms.deactivated_at)}
+              {ms.deactivated_registered_at && (
+                <span className="ml-1 text-[10px] text-muted/70">
+                  (registrado em {fmtDate(ms.deactivated_registered_at)})
+                </span>
+              )}
+            </span>
           )}
         </div>
       ))}

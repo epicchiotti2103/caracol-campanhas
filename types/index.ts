@@ -48,7 +48,9 @@ export interface CampanhaPublisherPayout {
 
 /**
  * Media source (PID) de um publisher. Tem estado ativo/inativo: ao desativar
- * exige justificativa (`deactivated_reason`) e guarda a data (`deactivated_at`).
+ * exige justificativa (`deactivated_reason`) e guarda DUAS datas:
+ * `deactivated_at` = data EFETIVA da pausa (informada pelo user, default hoje);
+ * `deactivated_registered_at` = registro automatico (now() no backend, read-only).
  */
 export interface CampanhaMediaSource {
   id: string;
@@ -56,6 +58,7 @@ export interface CampanhaMediaSource {
   active: boolean;
   deactivated_reason: string | null;
   deactivated_at: string | null;
+  deactivated_registered_at: string | null;
 }
 
 /**

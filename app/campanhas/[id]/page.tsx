@@ -764,12 +764,14 @@ function MediaSourceRow({
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const patch = async (active: boolean, reason?: string) => {
+  const patch = async (active: boolean, reason?: string, deactivatedAt?: string) => {
     setBusy(true);
     try {
       await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
         method: "PATCH",
-        body: JSON.stringify(active ? { active } : { active, reason })
+        body: JSON.stringify(
+          active ? { active } : { active, reason, deactivated_at: deactivatedAt }
+        )
       });
       toast.success(active ? "Media source reativada." : "Media source desativada.");
       setConfirmOpen(false);
@@ -805,7 +807,9 @@ function MediaSourceRow({
           <DeactivateMediaSourceModal
             name={ms.name}
             submitting={busy}
-            onConfirm={(reason) => patch(false, reason)}
+            onConfirm={(reason, deactivatedAt) =>
+              patch(false, reason, deactivatedAt)
+            }
             onCancel={() => setConfirmOpen(false)}
           />
         )}
@@ -823,7 +827,14 @@ function MediaSourceRow({
         <span className="text-xs text-muted">— {ms.deactivated_reason}</span>
       )}
       {ms.deactivated_at && (
-        <span className="text-xs text-muted">({fmtDate(ms.deactivated_at)})</span>
+        <span className="text-xs text-muted">
+          Pausado em {fmtDate(ms.deactivated_at)}
+          {ms.deactivated_registered_at && (
+            <span className="ml-1 text-[10px] text-muted/70">
+              (registrado em {fmtDate(ms.deactivated_registered_at)})
+            </span>
+          )}
+        </span>
       )}
       <button
         type="button"

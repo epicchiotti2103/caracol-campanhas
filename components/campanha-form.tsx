@@ -95,6 +95,7 @@ interface MediaSourceRow {
   active: boolean;
   deactivated_reason: string | null;
   deactivated_at: string | null;
+  deactivated_registered_at: string | null;
 }
 
 interface PublisherRow {
@@ -110,7 +111,8 @@ function emptyMediaSourceRow(): MediaSourceRow {
     name: "",
     active: true,
     deactivated_reason: null,
-    deactivated_at: null
+    deactivated_at: null,
+    deactivated_registered_at: null
   };
 }
 
@@ -142,7 +144,8 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
           name: ms?.name ?? "",
           active: ms?.active !== false,
           deactivated_reason: ms?.deactivated_reason ?? null,
-          deactivated_at: ms?.deactivated_at ?? null
+          deactivated_at: ms?.deactivated_at ?? null,
+          deactivated_registered_at: ms?.deactivated_registered_at ?? null
         }))
       : [emptyMediaSourceRow()];
   return {
@@ -1347,13 +1350,19 @@ function FormMediaSourceRow({
 
   const hasId = Boolean(ms.id);
 
-  const patch = async (active: boolean, reason?: string) => {
+  const patch = async (
+    active: boolean,
+    reason?: string,
+    deactivatedAt?: string
+  ) => {
     if (!ms.id) return;
     setBusy(true);
     try {
       await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
         method: "PATCH",
-        body: JSON.stringify(active ? { active } : { active, reason })
+        body: JSON.stringify(
+          active ? { active } : { active, reason, deactivated_at: deactivatedAt }
+        )
       });
       toast.success(
         active ? "Media source reativada." : "Media source desativada."
@@ -1363,13 +1372,18 @@ function FormMediaSourceRow({
         onToggled({
           active: true,
           deactivated_reason: null,
-          deactivated_at: null
+          deactivated_at: null,
+          deactivated_registered_at: null
         });
       } else {
         onToggled({
           active: false,
           deactivated_reason: reason ?? null,
-          deactivated_at: new Date().toISOString()
+          // data efetiva = a escolhida (default hoje); registrado = now()
+          deactivated_at: deactivatedAt
+            ? `${deactivatedAt}T00:00:00`
+            : new Date().toISOString(),
+          deactivated_registered_at: new Date().toISOString()
         });
       }
     } catch (err: any) {
@@ -1426,7 +1440,14 @@ function FormMediaSourceRow({
           <p className="pl-1 text-xs text-muted">
             {ms.deactivated_reason && <span>— {ms.deactivated_reason}</span>}
             {ms.deactivated_at && (
-              <span className="ml-1">({fmtDateBr(ms.deactivated_at)})</span>
+              <span className="ml-1">
+                Pausado em {fmtDateBr(ms.deactivated_at)}
+                {ms.deactivated_registered_at && (
+                  <span className="ml-1 text-[10px] text-muted/70">
+                    (registrado em {fmtDateBr(ms.deactivated_registered_at)})
+                  </span>
+                )}
+              </span>
             )}
           </p>
         )}
@@ -1471,7 +1492,9 @@ function FormMediaSourceRow({
         <DeactivateMediaSourceModal
           name={ms.name}
           submitting={busy}
-          onConfirm={(reason) => patch(false, reason)}
+          onConfirm={(reason, deactivatedAt) =>
+            patch(false, reason, deactivatedAt)
+          }
           onCancel={() => setConfirmOpen(false)}
         />
       )}
