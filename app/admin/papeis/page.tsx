@@ -25,7 +25,11 @@ type MatrixResponse = {
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
-  campanha: "Campanha"
+  campanha: "Campanha",
+  cliente_tracker: "Cliente (Tracker)",
+  cliente_mobile: "Cliente (Mobile)",
+  publisher_tracker: "Publisher (Tracker)",
+  publisher_mobile: "Publisher (Mobile)"
 };
 
 function roleLabel(role: string): string {
@@ -185,13 +189,13 @@ function PapeisView() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                <th className="min-w-[180px] px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Permissao
                 </th>
                 {roles.map((role) => (
                   <th
                     key={role}
-                    className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-muted"
+                    className="whitespace-nowrap px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-muted"
                   >
                     <span className="inline-flex items-center gap-1.5">
                       {role === "admin" ? (
@@ -253,7 +257,7 @@ function RoleGroup({
           key={item.key}
           className={i < items.length - 1 ? "border-b border-border" : ""}
         >
-          <td className="px-4 py-3">
+          <td className="min-w-[180px] px-4 py-3">
             <p className="font-medium text-foreground">{item.label}</p>
             <p className="font-mono text-[11px] text-muted">{item.key}</p>
           </td>
@@ -261,7 +265,7 @@ function RoleGroup({
             const isAdminRole = role === "admin";
             const checked = isAdminRole ? true : !!matrix[role]?.[item.key];
             return (
-              <td key={role} className="px-4 py-3 text-center">
+              <td key={role} className="px-3 py-3 text-center">
                 <label className="inline-flex cursor-pointer items-center justify-center">
                   <input
                     type="checkbox"
