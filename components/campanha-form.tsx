@@ -755,7 +755,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           </Field>
           <Field
             label="MMP"
-            hint="Adjust ainda nao tem integracao automatica — metrics via form manual"
+            hint="Mobile Measurement Partner da campanha. AppsFlyer ou Adjust — o robo api_af busca os metrics no MMP escolhido."
           >
             <div className="flex gap-2">
               {(["appsflyer", "adjust"] as CampanhaMMP[]).map((opt) => (
@@ -950,15 +950,17 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
               className={inputCls}
             />
           </Field>
-          <Field label="af_prt" hint="AppsFlyer Partner">
-            <input
-              type="text"
-              value={afPrt}
-              onChange={(e) => setAfPrt(e.target.value)}
-              placeholder="Ex: meta_int"
-              className={inputCls}
-            />
-          </Field>
+          {mmp !== "adjust" && (
+            <Field label="af_prt" hint="AppsFlyer Partner">
+              <input
+                type="text"
+                value={afPrt}
+                onChange={(e) => setAfPrt(e.target.value)}
+                placeholder="Ex: meta_int"
+                className={inputCls}
+              />
+            </Field>
+          )}
           <Field label="Plataforma">
             <input
               type="text"
@@ -1015,7 +1017,11 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
 
       <Section
         title="Eventos pagos"
-        hint={`Valores em ${moedaSym} (moeda da campanha)`}
+        hint={
+          mmp === "adjust"
+            ? `Valores em ${moedaSym} (moeda da campanha). O nome do evento deve corresponder ao evento no Adjust (o api_af ignora prefixo "NN.", caixa e _/espaco ao casar).`
+            : `Valores em ${moedaSym} (moeda da campanha)`
+        }
       >
         <div className="space-y-2">
           {/* Header de colunas */}
@@ -1096,6 +1102,12 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         }
       >
         <div className="space-y-3">
+          {mmp === "adjust" && (
+            <p className="text-xs text-muted">
+              Para Adjust, informe o app_token de cada app no campo App Token
+              (Adjust) abaixo.
+            </p>
+          )}
           {apps.length === 0 && (
             <p className="text-xs text-muted">
               {budgetMode === "per_platform"
@@ -1134,14 +1146,25 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                     className={inputCls}
                   />
                 </Field>
-                <Field label="App ID">
+                <Field
+                  label={mmp === "adjust" ? "App Token (Adjust)" : "App ID"}
+                  hint={
+                    mmp === "adjust"
+                      ? "Token do app no Adjust (hash ~12 chars, ex: tsugshug2328). NAO e o store id (com.x.app / id123)."
+                      : "Store id do app no AppsFlyer (Android: com.x.app — iOS: id1234567890)."
+                  }
+                >
                   <input
                     type="text"
                     value={row.app_id}
                     onChange={(e) =>
                       updateApp(idx, { app_id: e.target.value })
                     }
-                    placeholder="com.claro.app ou id1234567890"
+                    placeholder={
+                      mmp === "adjust"
+                        ? "tsugshug2328"
+                        : "com.claro.app ou id1234567890"
+                    }
                     className={inputCls}
                   />
                 </Field>
