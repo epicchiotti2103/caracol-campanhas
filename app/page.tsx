@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Megaphone, ArrowRight } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/lib/auth-context";
+import { useCan } from "@/lib/perms-context";
 
 export default function HomePage() {
   return (
@@ -15,6 +16,7 @@ export default function HomePage() {
 
 function HomeContent() {
   const { user } = useAuth();
+  const can = useCan();
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6 lg:px-8">
@@ -51,23 +53,25 @@ function HomeContent() {
           <ArrowRight className="mt-2 h-4 w-4 flex-shrink-0 text-muted transition-colors group-hover:text-primary" />
         </Link>
 
-        <Link
-          href="/campanhas/new"
-          className="group flex items-start gap-4 rounded-xl border border-border bg-surface p-5 transition-colors hover:border-primary/40"
-        >
-          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <span className="text-lg font-bold text-primary">+</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-foreground">
-              Nova campanha
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              Cadastre uma campanha nova com nome, slug e status.
-            </p>
-          </div>
-          <ArrowRight className="mt-2 h-4 w-4 flex-shrink-0 text-muted transition-colors group-hover:text-primary" />
-        </Link>
+        {can("campanhas.create") && (
+          <Link
+            href="/campanhas/new"
+            className="group flex items-start gap-4 rounded-xl border border-border bg-surface p-5 transition-colors hover:border-primary/40"
+          >
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <span className="text-lg font-bold text-primary">+</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                Nova campanha
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Cadastre uma campanha nova com nome, slug e status.
+              </p>
+            </div>
+            <ArrowRight className="mt-2 h-4 w-4 flex-shrink-0 text-muted transition-colors group-hover:text-primary" />
+          </Link>
+        )}
       </div>
     </div>
   );

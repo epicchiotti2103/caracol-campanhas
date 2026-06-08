@@ -25,6 +25,17 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 - `/campanhas/[id]` — detalhe com toggle in-place pra editar (sem rota `/edit` separada); botao "Desempenho" leva pra `/campanhas/[id]/desempenho`. Resumo ordenado por hierarquia: Identificacao (codigo/status/nome/tipo/moeda/mes ref) → **Budget** (modo legivel + valores conforme `budget_mode`: `total` = budget unico; `per_event` = tabela eventos x `budget_monthly` + total; `per_platform` = tabela apps por plataforma x `budget_monthly` + soma) → Periodo → Eventos pagos → App/parceiro → Apps → Publishers → Criativo/obs → **Tecnico** (external_id/timezone/MMP no fim) → Metadados
 - `/campanhas/[id]/desempenho` — cards por plataforma (consolidado, android, ios) com gasto/budget + pace + fraude P360 + PA False, alem de grafico de historico (7/30/90 dias) consumindo `/api/v1/campanhas/{id}/metrics/{latest,history}`
 - `/desempenho` — dashboard cross-campanha (link na navbar). Tabela com a linha consolidada (mais recente) de cada campanha: gasto/budget com barra, % MTD, pace_status, % P360 Evt, % PA False, data da ultima atualizacao. Filtros: status / tipo (UA/RTG) / pace_status (incl. "sem dados") / busca por nome/codigo. Fetch: 1 chamada a `/campanhas` + Promise.allSettled em `/{id}/metrics/latest` por campanha (opcao A; pra >20 campanhas pedir endpoint agregador no backend)
+- `/admin/papeis` — **admin-only** (item "Papeis" na navbar so pra admin). Grade papel×permissao (toggles) consumindo `GET /perms/campanhas/matrix` e salvando via `PUT`. Coluna `admin` read-only (god-mode); demais papeis editaveis
+
+## RBAC (controle de acesso por papel)
+
+A UI gateia acoes por **permissoes dinamicas por papel**, nao mais so por `isAdmin`:
+
+- `lib/perms-context.tsx` (`PermsProvider`) carrega `GET /perms/campanhas/me` no boot e expoe `useCan()` → `can(key)` (admin sempre true).
+- Keys: `campanhas.view_all`, `campanhas.create`, `campanhas.edit`, `campanhas.delete`, `campanhas.metrics_manual`.
+- Gating: criar/duplicar → `create`; editar/pausar/despausar/toggle media source/fechamento → `edit`; metrics manual → `metrics_manual`; deletar → `delete`. A lista nao e escondida por `isAdmin` — papel `campanha` ve todas (backend resolve via `view_all`).
+- Graceful degradation: se o backend de perms cair, fallback por `hub_role` (admin = tudo; campanha = view_all+create+edit).
+- NAO mexe em `lib/auth-context.tsx` (replicado nos 5 apps) — o RBAC vive em arquivo proprio. Rotas `/perms/campanhas/*` sao do backend (subagente `tracker`).
 
 ## Modelo de dados (campanha)
 

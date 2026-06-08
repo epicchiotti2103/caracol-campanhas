@@ -40,6 +40,7 @@ import {
   normalizePaceStatus,
   fmtDateBr
 } from "@/lib/pace";
+import { useCan } from "@/lib/perms-context";
 import type {
   Campanha,
   CampanhaDashboardSummary,
@@ -815,6 +816,7 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 }
 
 function EmptyStateNoCampanhas({ month }: { month: string }) {
+  const can = useCan();
   return (
     <div className="py-20 text-center">
       <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
@@ -822,15 +824,19 @@ function EmptyStateNoCampanhas({ month }: { month: string }) {
         Nenhuma campanha em {formatMesAnoShort(month) || "—"}.
       </p>
       <p className="mx-auto mb-5 max-w-md text-sm text-muted">
-        Cadastre uma campanha ou troque o mes selecionado.
+        {can("campanhas.create")
+          ? "Cadastre uma campanha ou troque o mes selecionado."
+          : "Troque o mes selecionado."}
       </p>
-      <Link
-        href="/campanhas/new"
-        className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
-      >
-        <Plus className="h-4 w-4" />
-        Criar campanha
-      </Link>
+      {can("campanhas.create") && (
+        <Link
+          href="/campanhas/new"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+        >
+          <Plus className="h-4 w-4" />
+          Criar campanha
+        </Link>
+      )}
     </div>
   );
 }

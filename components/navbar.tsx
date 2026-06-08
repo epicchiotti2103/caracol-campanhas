@@ -11,7 +11,8 @@ import {
   ArrowLeft,
   ShieldCheck,
   User,
-  LineChart
+  LineChart,
+  KeyRound
 } from "lucide-react";
 
 type LinkDef = { href: string; label: string; icon: any };
@@ -19,6 +20,10 @@ type LinkDef = { href: string; label: string; icon: any };
 const LINKS: LinkDef[] = [
   { href: "/campanhas", label: "Campanhas", icon: Megaphone },
   { href: "/desempenho", label: "Desempenho", icon: LineChart }
+];
+
+const ADMIN_LINKS: LinkDef[] = [
+  { href: "/admin/papeis", label: "Papeis", icon: KeyRound }
 ];
 
 export function Navbar() {
@@ -56,7 +61,7 @@ export function Navbar() {
             </a>
 
             <nav className="hidden items-center gap-1 md:flex">
-              {LINKS.map(({ href, label, icon: Icon }) => {
+              {[...LINKS, ...(isAdmin ? ADMIN_LINKS : [])].map(({ href, label, icon: Icon }) => {
                 const active = pathname === href || pathname.startsWith(href + "/");
                 return (
                   <Link

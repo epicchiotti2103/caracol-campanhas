@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
+import { PermsProvider } from "@/lib/perms-context";
 import { ToastProvider } from "@/lib/toast-context";
 import { BootstrapGate } from "@/components/bootstrap-gate";
 
@@ -18,9 +19,11 @@ export default function RootLayout({
     <html lang="pt-BR" className="dark">
       <body>
         <AuthProvider>
-          <ToastProvider>
-            <BootstrapGate>{children}</BootstrapGate>
-          </ToastProvider>
+          <PermsProvider>
+            <ToastProvider>
+              <BootstrapGate>{children}</BootstrapGate>
+            </ToastProvider>
+          </PermsProvider>
         </AuthProvider>
       </body>
     </html>

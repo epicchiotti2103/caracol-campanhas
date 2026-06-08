@@ -20,6 +20,7 @@ import {
   formatCurrency,
   formatMesAnoShort
 } from "@/lib/format";
+import { useCan } from "@/lib/perms-context";
 import type {
   Campanha,
   CampanhaEvento,
@@ -54,6 +55,7 @@ export default function CampanhasPage() {
 function CampanhasList() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const can = useCan();
   const monthFromUrl = searchParams?.get("month") || "";
 
   const [campanhas, setCampanhas] = useState<Campanha[]>([]);
@@ -169,13 +171,15 @@ function CampanhasList() {
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </button>
-          <Link
-            href="/campanhas/new"
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" />
-            Nova campanha
-          </Link>
+          {can("campanhas.create") && (
+            <Link
+              href="/campanhas/new"
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" />
+              Nova campanha
+            </Link>
+          )}
         </div>
       </div>
 

@@ -23,6 +23,7 @@ import { ReasonDateModal } from "@/components/reason-date-modal";
 import { Pause, Play } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
+import { useCan } from "@/lib/perms-context";
 import {
   formatCurrency,
   formatMesAnoLong,
@@ -50,6 +51,7 @@ function CampanhaDetail() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const toast = useToast();
+  const can = useCan();
   const id = params?.id;
 
   const [campanha, setCampanha] = useState<Campanha | null>(null);
@@ -208,6 +210,7 @@ function CampanhaDetail() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
               {!editing &&
+                can("campanhas.edit") &&
                 (campanha.status === "pausada" ? (
                   <button
                     type="button"
@@ -234,15 +237,17 @@ function CampanhaDetail() {
                 ))}
               {!editing && (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => setDuplicateOpen(true)}
-                    className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
-                    title="Duplicar pro proximo mes"
-                  >
-                    <Copy className="h-4 w-4" />
-                    Duplicar pro proximo mes
-                  </button>
+                  {can("campanhas.create") && (
+                    <button
+                      type="button"
+                      onClick={() => setDuplicateOpen(true)}
+                      className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                      title="Duplicar pro proximo mes"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Duplicar pro proximo mes
+                    </button>
+                  )}
                   <Link
                     href={`/campanhas/${campanha.id}/desempenho`}
                     className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
@@ -252,23 +257,25 @@ function CampanhaDetail() {
                   </Link>
                 </>
               )}
-              <button
-                type="button"
-                onClick={() => setEditing((v) => !v)}
-                className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
-              >
-                {editing ? (
-                  <>
-                    <X className="h-4 w-4" />
-                    Cancelar
-                  </>
-                ) : (
-                  <>
-                    <Pencil className="h-4 w-4" />
-                    Editar
-                  </>
-                )}
-              </button>
+              {can("campanhas.edit") && (
+                <button
+                  type="button"
+                  onClick={() => setEditing((v) => !v)}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                >
+                  {editing ? (
+                    <>
+                      <X className="h-4 w-4" />
+                      Cancelar
+                    </>
+                  ) : (
+                    <>
+                      <Pencil className="h-4 w-4" />
+                      Editar
+                    </>
+                  )}
+                </button>
+              )}
               </div>
             </div>
           </div>
@@ -1034,6 +1041,8 @@ function MediaSourceRow({
   onReload: () => Promise<void> | void;
 }) {
   const toast = useToast();
+  const can = useCan();
+  const canEdit = can("campanhas.edit");
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -1062,20 +1071,22 @@ function MediaSourceRow({
         <span className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs text-foreground">
           {ms.name}
         </span>
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          disabled={busy}
-          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
-          title="Desativar media source"
-        >
-          {busy ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Ban className="h-3 w-3" />
-          )}
-          Desativar
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+            title="Desativar media source"
+          >
+            {busy ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Ban className="h-3 w-3" />
+            )}
+            Desativar
+          </button>
+        )}
         {confirmOpen && (
           <DeactivateMediaSourceModal
             name={ms.name}
@@ -1109,20 +1120,22 @@ function MediaSourceRow({
           )}
         </span>
       )}
-      <button
-        type="button"
-        onClick={() => patch(true)}
-        disabled={busy}
-        className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-        title="Reativar media source"
-      >
-        {busy ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <RotateCcw className="h-3 w-3" />
-        )}
-        Reativar
-      </button>
+      {canEdit && (
+        <button
+          type="button"
+          onClick={() => patch(true)}
+          disabled={busy}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+          title="Reativar media source"
+        >
+          {busy ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <RotateCcw className="h-3 w-3" />
+          )}
+          Reativar
+        </button>
+      )}
     </div>
   );
 }

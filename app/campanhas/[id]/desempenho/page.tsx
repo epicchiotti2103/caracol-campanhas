@@ -20,6 +20,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { CampanhaFechamentoModal } from "@/components/campanha-fechamento-modal";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
+import { useCan } from "@/lib/perms-context";
 import {
   blurFormatNumberPtBr,
   formatCurrency,
@@ -62,6 +63,7 @@ export default function DesempenhoPage() {
 
 function DesempenhoView() {
   const params = useParams<{ id: string }>();
+  const can = useCan();
   const id = params?.id;
 
   const [campanha, setCampanha] = useState<Campanha | null>(null);
@@ -170,9 +172,11 @@ function DesempenhoView() {
 
   const hasData = (latest?.report_date && platformsOrdered.length > 0) || false;
   // Input manual liberado pra Adjust OU campanha marcada coleta_manual
-  // (ex: parceiro AppsFlyer sem coleta automatica).
+  // (ex: parceiro AppsFlyer sem coleta automatica) E desde que o usuario tenha
+  // a permissao `campanhas.metrics_manual`.
   const canInputManual =
-    campanha?.mmp === "adjust" || !!campanha?.coleta_manual;
+    (campanha?.mmp === "adjust" || !!campanha?.coleta_manual) &&
+    can("campanhas.metrics_manual");
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -248,10 +252,12 @@ function DesempenhoView() {
                   Inserir metrics manualmente
                 </button>
               )}
-              <FechamentoButton
-                fechamento={fechamento}
-                onClick={() => setFechamentoOpen(true)}
-              />
+              {can("campanhas.edit") && (
+                <FechamentoButton
+                  fechamento={fechamento}
+                  onClick={() => setFechamentoOpen(true)}
+                />
+              )}
               <button
                 onClick={() => loadAll({ silent: true })}
                 disabled={refreshing}

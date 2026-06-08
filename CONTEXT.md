@@ -77,6 +77,9 @@ Todos sob `NEXT_PUBLIC_API_URL` (`https://trk.aeobr.com.br`, com `/api/v1` conca
 - `DELETE /campanhas/{id}` — remove (fase 2, opcional)
 - `GET /campanhas/{id}/users` — gestores (fase 2)
 - `PUT /campanhas/{id}/users/{user_id}` — atribuir gestor (fase 2)
+- `GET /perms/campanhas/me` — `{app, role, permissions:[keys]}` do usuario logado (RBAC dinamico, fase 4.7)
+- `GET /perms/campanhas/matrix` (admin) — `{roles, catalog:[{key,label,group}], matrix:{role:{key:bool}}}`
+- `PUT /perms/campanhas/matrix` (admin) — body `{matrix:{role:{key:bool}}}`
 
 A lista chama `GET /campanhas` em modo tolerante: 404 e "failed to fetch" sao silenciados pra permitir o app rodar enquanto o backend nao existe.
 
@@ -121,6 +124,16 @@ Mesmo cookie no dominio raiz `.aeobr.com.br` (igual Hub, NF, Tracker). Em produc
 - Em client components, usar `const { isAdmin } = useAuth()`.
 - Em middleware, ler cookie `user_data` e checar `hub_role === "admin"`.
 
+### RBAC dinamico (Fase 4.7)
+
+Acima do `isAdmin` binario, a UI gateia acoes por **permissoes dinamicas por papel**, carregadas no bootstrap.
+
+- **`lib/perms-context.tsx`** (`PermsProvider` no `app/layout.tsx`, dentro do `AuthProvider`): no boot chama `GET /perms/campanhas/me` → `{role, permissions:[keys]}` e expoe `usePerms()` / `useCan()` com helper `can(key)`. **admin sempre retorna true** (god-mode). NAO mexe em `auth-context.tsx` (replicado nos 5 apps).
+- **Keys**: `campanhas.view_all`, `campanhas.create`, `campanhas.edit`, `campanhas.delete`, `campanhas.metrics_manual`.
+- **Graceful degradation**: se `/perms/campanhas/me` falhar (backend fora do ar), fallback derivado do `hub_role` — `admin` ve tudo; `campanha` = view_all+create+edit (sem delete, sem metrics_manual); outros = nada (o `BootstrapGate` ja barra quem nao tem o app).
+- **Gating na UI** (substitui checks `isAdmin` hardcoded): criar/duplicar campanha → `create`; editar / pausar / despausar / toggle media source / fechamento mensal → `edit`; inserir metrics manual (modal Adjust/coleta_manual) → `metrics_manual`; deletar → `delete` (sem botao de delete na UI hoje, mas a key existe na matriz). A **lista** nao e mais escondida por `isAdmin` — `campanha` ve todas (backend resolve via `view_all`).
+- **Tela admin `app/admin/papeis/page.tsx`** (admin-only, item "Papeis" na navbar so pra admin): grade papel×permissao consumindo `GET /perms/campanhas/matrix` → `{roles, catalog:[{key,label,group}], matrix:{role:{key:bool}}}` e salvando via `PUT /perms/campanhas/matrix` body `{matrix}`. Coluna `admin` e read-only (god-mode); demais papeis editaveis por toggle.
+
 ### Acesso ao app
 
 Diferente do NF, **nao tem `BootstrapGate`** neste scaffold inicial. Quem chega autenticado entra. Quando o gate de `/hub/me/apps` (slug `campanhas`) for adicionado, replicar o padrao do `caracol-nf/components/nf/bootstrap-gate.tsx`.
@@ -149,6 +162,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=(painel Supabase)
 - [x] **Fase 4.4 — ativar/desativar media source (PID)** (02/06): `campanhas_publisher_media_sources` ganhou `active`/`deactivated_reason`/`deactivated_at` (backend commit 61229a7). O shape de `media_sources` em LEITURA virou `[{id, name, active, deactivated_reason, deactivated_at}]` (era `[string]`). Toggle via `PATCH /api/v1/campanhas/publishers/media-sources/{ms_id}` body `{active, reason?}` — desativar EXIGE `reason` (400 se vazio), reativar limpa reason+data. No detalhe (`PublishersTable`) cada media source mostra estado (ativa = chip + "Desativar"; inativa = riscado + justificativa + data + "Reativar"); desativar abre modal com justificativa obrigatoria; recarrega o detalhe apos toggle. No SAVE do form ainda manda `string[]` de nomes (backend reconcilia o estado por nome); o form extrai `.name` na leitura. Fechamento destaca media sources inativas (badge + justificativa + data) no `publishers_cadastrados`
 - [x] **Fase 4.5 — duas datas na pausa de media source** (02/06): backend (commit 8c7af37) separou `deactivated_at` = data EFETIVA da pausa (informada pelo user, default hoje) de `deactivated_registered_at` = registro automatico now() (read-only). Shape de `media_sources` ganhou `deactivated_registered_at`. `PATCH .../media-sources/{ms_id}` aceita `{active, reason?, deactivated_at?}` (ISO `YYYY-MM-DD`; se omitido usa hoje). Front: `DeactivateMediaSourceModal` ganhou campo "Data da pausa" (`input type=date`, default hoje, editavel) + texto "Registrado automaticamente na data de hoje"; envia `deactivated_at`. Exibicao das inativas (form, `PublishersTable`, fechamento) mostra "Pausado em {efetiva}" + "(registrado em {registered_at})" em texto menor; tolera registered_at null (dados antigos)
 - [x] **Fase 4.6 — pausar/reativar campanha inteira** (02/06): backend (commit 3dccb46) ganhou `campanhas.paused_at`/`paused_registered_at`/`paused_reason` + endpoints `POST /api/v1/campanhas/{id}/pause` (body `{reason, paused_at?}` → status `pausada`) e `POST /{id}/unpause` (volta `ativa`). GET detalhe/listagem retornam os 3 campos; fechamento GET retorna `campanha_paused` (bool) + os 3 campos. Front: botao **"Pausar campanha"** (status != pausada) / **"Reativar campanha"** (pausada) no header do detalhe; pausar abre `ReasonDateModal` (motivo select Fraude/Budget/Outro + data da pausa) e chama `/pause`, reativar chama `/unpause`. Aviso destacado "Campanha pausada em {paused_at} — {paused_reason} (registrado em {paused_registered_at})" quando pausada. Modal de fechamento mostra aviso "⚠ Campanha inteira foi pausada..." no topo quando `campanha_paused`. Logica motivo+data extraida pra `components/reason-date-modal.tsx` (DRY com `DeactivateMediaSourceModal`, que virou wrapper fino)
+- [x] **Fase 4.7 — RBAC dinamico** (08/06): permissoes por papel carregadas no boot via `GET /perms/campanhas/me` (`lib/perms-context.tsx` → `useCan()`); UI gateada por `can(...)` em vez de `isAdmin` (create/edit/delete/metrics_manual); papel `campanha` agora ve a lista toda (backend resolve via `view_all`) e nao e mais barrado pelo gate; tela admin `app/admin/papeis` (grade papel×permissao, `GET`/`PUT /perms/campanhas/matrix`) + item "Papeis" na navbar admin. Graceful degradation com fallback por `hub_role` se o backend de perms estiver fora. **Backend (rotas `/perms/campanhas/*`) e job do subagente `tracker`.**
 - [ ] **Fase 5 — integracao com NF**: NF passa a usar dropdown de campanhas em vez de texto livre; FK `nf_invoices.campanha_id` + backfill
 
 ## Decisoes tomadas

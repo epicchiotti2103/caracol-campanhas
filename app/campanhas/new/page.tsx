@@ -4,8 +4,12 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { CampanhaForm } from "@/components/campanha-form";
+import { usePerms } from "@/lib/perms-context";
 
 export default function NewCampanhaPage() {
+  const { can, loading } = usePerms();
+  const allowed = can("campanhas.create");
+
   return (
     <AppShell>
       <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
@@ -27,7 +31,13 @@ export default function NewCampanhaPage() {
           </p>
         </div>
 
-        <CampanhaForm />
+        {loading ? null : allowed ? (
+          <CampanhaForm />
+        ) : (
+          <div className="rounded-xl border border-border bg-surface p-6 text-sm text-muted">
+            Voce nao tem permissao para cadastrar campanhas.
+          </div>
+        )}
       </div>
     </AppShell>
   );
