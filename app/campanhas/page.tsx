@@ -175,6 +175,22 @@ function CampanhasList() {
     });
   }, [campanhas, search, statusFilter]);
 
+  // Soma os budgets das campanhas exibidas, agrupando por moeda (nunca soma
+  // moedas diferentes). Reaproveita a lista ja filtrada.
+  const budgetTotals = useMemo(() => {
+    const acc = new Map<Moeda, number>();
+    for (const c of filtered) {
+      const value = c.budget_total ?? c.budget;
+      if (value == null || Number.isNaN(value)) continue;
+      const moeda: Moeda = c.moeda === "USD" ? "USD" : "BRL";
+      acc.set(moeda, (acc.get(moeda) ?? 0) + value);
+    }
+    // BRL primeiro, USD depois.
+    return (["BRL", "USD"] as Moeda[])
+      .filter((m) => acc.has(m))
+      .map((m) => ({ moeda: m, total: acc.get(m) as number }));
+  }, [filtered]);
+
   // Monta opcoes do dropdown: garantir que o mes atual aparece mesmo se nao tem dado ainda
   const monthOptions = useMemo(() => {
     const set = new Set<string>(months);
@@ -328,6 +344,7 @@ function CampanhasList() {
                     key={c.id}
                     campanha={c}
                     isLast={i === filtered.length - 1}
+                    zebra={i % 2 === 1}
                     canDelete={can("campanhas.delete")}
                     onClick={() => router.push(`/campanhas/${c.id}`)}
                     onDelete={() => setToDelete(c)}
@@ -335,6 +352,30 @@ function CampanhasList() {
                 ))
               )}
             </tbody>
+            {!loading && filtered.length > 0 && budgetTotals.length > 0 && (
+              <tfoot>
+                <tr className="border-t border-border">
+                  <td
+                    colSpan={5}
+                    className="whitespace-nowrap px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted"
+                  >
+                    Total
+                  </td>
+                  <td
+                    colSpan={2}
+                    className="whitespace-nowrap px-3 py-2.5 align-top font-semibold text-foreground"
+                  >
+                    {budgetTotals.map((t, i) => (
+                      <span key={t.moeda} className="whitespace-nowrap">
+                        {i > 0 && <span className="px-1 text-muted">·</span>}
+                        {formatCurrency(t.total, t.moeda)}
+                      </span>
+                    ))}
+                  </td>
+                  <td colSpan={6} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
 
@@ -421,12 +462,14 @@ function DeleteCampanhaModal({
 function CampanhaRow({
   campanha,
   isLast,
+  zebra,
   canDelete,
   onClick,
   onDelete
 }: {
   campanha: Campanha;
   isLast: boolean;
+  zebra: boolean;
   canDelete: boolean;
   onClick: () => void;
   onDelete: () => void;
@@ -435,8 +478,8 @@ function CampanhaRow({
     <tr
       onClick={onClick}
       className={`group cursor-pointer transition-colors hover:bg-background ${
-        !isLast ? "border-b border-border" : ""
-      }`}
+        zebra ? "bg-white/[0.02]" : ""
+      } ${!isLast ? "border-b border-border" : ""}`}
     >
       <td className="whitespace-nowrap px-3 py-2.5 align-top">
         <span className="font-mono text-xs font-semibold text-primary">
