@@ -103,7 +103,7 @@ Endpoints principais:
 - `PATCH /api/v1/campanhas/{id}` — atualiza; arrays (`eventos_pagos`/`apps`/`publishers`) fazem replace total quando enviados
 - `POST /api/v1/campanhas/{id}/pause` — pausa a campanha inteira (status → `pausada`). Body `{reason, paused_at?}` (`paused_at` = data efetiva ISO `YYYY-MM-DD`, default hoje; `paused_registered_at` gravado automatico). Botao "Pausar campanha" no detalhe abre modal motivo+data (`ReasonDateModal`)
 - `POST /api/v1/campanhas/{id}/unpause` — reativa (status → `ativa`), limpa os 3 campos de pausa. Botao "Reativar campanha" no detalhe
-- `DELETE /api/v1/campanhas/{id}` — soft delete (status `encerrada`)
+- `DELETE /api/v1/campanhas/{id}` — exclui em cascata (remove eventos_pagos, apps, publishers e campanhas_users). Gateado por `campanhas.delete`. Botao "Excluir" no header do detalhe + acao de lixeira por item na lista, ambos com modal de confirmacao destrutiva
 - `GET /api/v1/campanhas/{id}/metrics/latest` — snapshot mais recente por plataforma (`android`/`ios`/`consolidado`)
 - `GET /api/v1/campanhas/{id}/metrics/history?days=N` — serie diaria (default 30, max 180). Usada pelo grafico de /desempenho
 - Gestao de gestores: `GET/PUT /api/v1/campanhas/{id}/users`

@@ -12,7 +12,8 @@ import {
   LineChart,
   Copy,
   Ban,
-  RotateCcw
+  RotateCcw,
+  Trash2
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -22,6 +23,7 @@ import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source
 import { ReasonDateModal } from "@/components/reason-date-modal";
 import { Pause, Play } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { invalidateCache } from "@/lib/cache";
 import { useToast } from "@/lib/toast-context";
 import { useCan } from "@/lib/perms-context";
 import {
@@ -63,6 +65,8 @@ function CampanhaDetail() {
   const [pauseOpen, setPauseOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [unpausing, setUnpausing] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -138,6 +142,21 @@ function CampanhaDetail() {
       toast.error(err?.message || "Falha ao pausar campanha.");
     } finally {
       setPausing(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!campanha) return;
+    setDeleting(true);
+    try {
+      await apiFetch(`/campanhas/${campanha.id}`, { method: "DELETE" });
+      toast.success("Campanha excluida.");
+      // Limpa o cache pra lista recarregar sem a campanha removida.
+      invalidateCache();
+      router.push("/campanhas");
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao excluir campanha.");
+      setDeleting(false);
     }
   };
 
@@ -276,6 +295,17 @@ function CampanhaDetail() {
                   )}
                 </button>
               )}
+              {!editing && can("campanhas.delete") && (
+                <button
+                  type="button"
+                  onClick={() => setDeleteOpen(true)}
+                  className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-sm font-semibold text-danger transition-colors hover:bg-danger/20"
+                  title="Excluir campanha"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Excluir
+                </button>
+              )}
               </div>
             </div>
           </div>
@@ -341,8 +371,77 @@ function CampanhaDetail() {
               onCancel={() => setDuplicateOpen(false)}
             />
           )}
+
+          {deleteOpen && (
+            <DeleteModal
+              campanhaName={campanha.name}
+              submitting={deleting}
+              onConfirm={handleDelete}
+              onCancel={() => setDeleteOpen(false)}
+            />
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+function DeleteModal({
+  campanhaName,
+  submitting,
+  onConfirm,
+  onCancel
+}: {
+  campanhaName: string;
+  submitting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h3 className="text-lg font-semibold text-foreground">
+            Excluir campanha
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label="Fechar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <p className="mb-5 text-sm text-foreground">
+          Excluir a campanha{" "}
+          <span className="font-medium">{campanhaName}</span>? Isso remove os
+          eventos pagos, apps e publishers dela.{" "}
+          <span className="font-semibold text-danger">
+            Acao irreversivel.
+          </span>
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            Excluir campanha
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

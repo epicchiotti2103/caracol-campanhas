@@ -10,11 +10,19 @@ import {
   RefreshCw,
   Eye,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Trash2,
+  X
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
-import { cachedFetch, MONTHS_AVAILABLE_TTL_MS } from "@/lib/cache";
+import { apiFetch } from "@/lib/api";
+import { useToast } from "@/lib/toast-context";
+import {
+  cachedFetch,
+  invalidateCache,
+  MONTHS_AVAILABLE_TTL_MS
+} from "@/lib/cache";
 import {
   currentMonthString,
   formatCurrency,
@@ -56,7 +64,12 @@ function CampanhasList() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const can = useCan();
+  const toast = useToast();
   const monthFromUrl = searchParams?.get("month") || "";
+
+  // Campanha alvo do modal de exclusao (null = fechado).
+  const [toDelete, setToDelete] = useState<Campanha | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [campanhas, setCampanhas] = useState<Campanha[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,6 +143,23 @@ function CampanhasList() {
     router.replace(`/campanhas${qs ? `?${qs}` : ""}`, { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
+
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      await apiFetch(`/campanhas/${toDelete.id}`, { method: "DELETE" });
+      toast.success("Campanha excluida.");
+      setToDelete(null);
+      // Invalida o cache da lista e recarrega o mes atual.
+      invalidateCache();
+      await load(month, true);
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao excluir campanha.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     return campanhas.filter((c) => {
@@ -293,7 +323,9 @@ function CampanhasList() {
                     key={c.id}
                     campanha={c}
                     isLast={i === filtered.length - 1}
+                    canDelete={can("campanhas.delete")}
                     onClick={() => router.push(`/campanhas/${c.id}`)}
+                    onDelete={() => setToDelete(c)}
                   />
                 ))
               )}
@@ -310,6 +342,73 @@ function CampanhasList() {
           </div>
         )}
       </div>
+
+      {toDelete && (
+        <DeleteCampanhaModal
+          campanhaName={toDelete.name}
+          submitting={deleting}
+          onConfirm={handleDelete}
+          onCancel={() => setToDelete(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DeleteCampanhaModal({
+  campanhaName,
+  submitting,
+  onConfirm,
+  onCancel
+}: {
+  campanhaName: string;
+  submitting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h3 className="text-lg font-semibold text-foreground">
+            Excluir campanha
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label="Fechar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <p className="mb-5 text-sm text-foreground">
+          Excluir a campanha{" "}
+          <span className="font-medium">{campanhaName}</span>? Isso remove os
+          eventos pagos, apps e publishers dela.{" "}
+          <span className="font-semibold text-danger">Acao irreversivel.</span>
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            Excluir campanha
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -317,11 +416,15 @@ function CampanhasList() {
 function CampanhaRow({
   campanha,
   isLast,
-  onClick
+  canDelete,
+  onClick,
+  onDelete
 }: {
   campanha: Campanha;
   isLast: boolean;
+  canDelete: boolean;
   onClick: () => void;
+  onDelete: () => void;
 }) {
   return (
     <tr
@@ -371,7 +474,23 @@ function CampanhaRow({
         )}
       </td>
       <td className="px-4 py-4">
-        <Eye className="h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
+        <div className="flex items-center justify-end gap-1">
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+              title="Excluir campanha"
+              aria-label="Excluir campanha"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          <Eye className="h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
+        </div>
       </td>
     </tr>
   );
