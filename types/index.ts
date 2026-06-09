@@ -85,6 +85,9 @@ export interface CampanhaPublisher {
   payouts: CampanhaPublisherPayout[];
   // Moeda do PO desse publisher (aplica a todos os POs dele). Default 'USD'.
   moeda: Moeda;
+  // Historico de renegociacoes de payout por evento (mesmo shape do fechamento).
+  // Ausente/vazio = nenhuma renegociacao. Ordenado por changed_at ASC.
+  renegociacoes?: CampanhaPublisherRenegociacao[];
   ordem?: number;
 }
 

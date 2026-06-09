@@ -38,6 +38,7 @@ import type {
   CampanhaApp,
   CampanhaMediaSource,
   CampanhaPublisher,
+  CampanhaPublisherRenegociacao,
   Moeda
 } from "@/types";
 
@@ -690,6 +691,21 @@ function platformLabel(p: AppPlatform | string | null | undefined): string {
   return p || "—";
 }
 
+/** Data curta PT-BR (ex: "06/jun") pro indicador de renegociacao. */
+function fmtDateShort(s: string | null | undefined): string {
+  if (!s) return "";
+  try {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "short"
+    });
+  } catch {
+    return s;
+  }
+}
+
 // Exibe o modo de budget + os valores conforme o modo:
 // - total: o budget unico da campanha
 // - per_event: lista de eventos com budget_monthly + total
@@ -1052,6 +1068,15 @@ function PublishersTable({
       {publishers.map((pub, i) => {
         // PO do publisher e na moeda DELE (default USD), nao na moeda da campanha.
         const pubMoeda: Moeda | string | null | undefined = pub.moeda ?? moeda;
+        // Renegociacoes indexadas por evento (mesmo padrao do fechamento).
+        const renegByEvento = new Map<string, CampanhaPublisherRenegociacao[]>();
+        for (const r of pub.renegociacoes || []) {
+          if (!r?.evento_nome) continue;
+          const key = r.evento_nome.trim().toLowerCase();
+          const arr = renegByEvento.get(key) || [];
+          arr.push(r);
+          renegByEvento.set(key, arr);
+        }
         return (
         <div
           key={pub.id || `${pub.nome}-${i}`}
@@ -1101,23 +1126,74 @@ function PublishersTable({
                     </tr>
                   </thead>
                   <tbody>
-                    {pub.payouts.map((po, j) => (
-                      <tr
-                        key={`${po.evento_nome}-${j}`}
-                        className={
-                          j < pub.payouts.length - 1
-                            ? "border-b border-border"
-                            : ""
-                        }
-                      >
-                        <td className="px-3 py-2 text-foreground">
-                          {po.evento_nome}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-foreground">
-                          {formatCurrency(po.payout, pubMoeda)}
-                        </td>
-                      </tr>
-                    ))}
+                    {pub.payouts.map((po, j) => {
+                      const renegs = (
+                        renegByEvento.get(
+                          po.evento_nome.trim().toLowerCase()
+                        ) || []
+                      )
+                        .slice()
+                        .sort((a, b) =>
+                          a.changed_at.localeCompare(b.changed_at)
+                        );
+                      const last =
+                        renegs.length > 0 ? renegs[renegs.length - 1] : null;
+                      // Cadeia completa pro tooltip (ex: "$10 → $8 (06/jun) → $7 (08/jun)").
+                      const chainTitle =
+                        renegs.length > 0
+                          ? renegs
+                              .map(
+                                (r) =>
+                                  `${
+                                    r.payout_anterior != null
+                                      ? formatCurrency(
+                                          r.payout_anterior,
+                                          pubMoeda
+                                        )
+                                      : "—"
+                                  } → ${
+                                    r.payout_novo != null
+                                      ? formatCurrency(r.payout_novo, pubMoeda)
+                                      : "—"
+                                  } (${fmtDateShort(r.changed_at)})`
+                              )
+                              .join("  ·  ")
+                          : undefined;
+                      return (
+                        <tr
+                          key={`${po.evento_nome}-${j}`}
+                          className={
+                            j < pub.payouts.length - 1
+                              ? "border-b border-border"
+                              : ""
+                          }
+                        >
+                          <td className="px-3 py-2 text-foreground">
+                            {po.evento_nome}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-foreground">
+                            <span className="inline-flex items-center justify-end gap-1.5">
+                              {formatCurrency(po.payout, pubMoeda)}
+                              {last && (
+                                <span
+                                  className="rounded bg-amber-500/10 px-1 py-0.5 text-[11px] font-medium text-amber-300"
+                                  title={chainTitle}
+                                >
+                                  (era{" "}
+                                  {last.payout_anterior != null
+                                    ? formatCurrency(
+                                        last.payout_anterior,
+                                        pubMoeda
+                                      )
+                                    : "—"}{" "}
+                                  · {fmtDateShort(last.changed_at)})
+                                </span>
+                              )}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
