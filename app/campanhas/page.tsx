@@ -26,12 +26,14 @@ import {
 import {
   currentMonthString,
   formatCurrency,
-  formatMesAnoShort
+  formatMesAnoShort,
+  formatNumberPtBr
 } from "@/lib/format";
 import { useCan } from "@/lib/perms-context";
 import type {
   Campanha,
   CampanhaEvento,
+  CampanhaMMP,
   CampanhaMonthsAvailable,
   CampanhaStatus,
   Moeda
@@ -266,7 +268,7 @@ function CampanhasList() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border">
                 {[
@@ -276,14 +278,17 @@ function CampanhasList() {
                   "Fim",
                   "Campanha",
                   "Budget",
-                  "Eventos",
+                  "Moeda",
+                  "Evento pago",
+                  "PO",
+                  "Plataforma",
                   "Status",
                   "Wave",
                   ""
                 ].map((h, i) => (
                   <th
                     key={`${h}-${i}`}
-                    className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted"
+                    className="whitespace-nowrap px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted"
                   >
                     {h}
                   </th>
@@ -293,13 +298,13 @@ function CampanhasList() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="py-16 text-center">
+                  <td colSpan={13} className="py-16 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-16 text-center">
+                  <td colSpan={13} className="py-16 text-center">
                     <Megaphone className="mx-auto mb-3 h-8 w-8 opacity-20" />
                     <p className="text-sm text-muted">
                       {campanhas.length === 0
@@ -433,36 +438,42 @@ function CampanhaRow({
         !isLast ? "border-b border-border" : ""
       }`}
     >
-      <td className="whitespace-nowrap px-4 py-4">
+      <td className="whitespace-nowrap px-3 py-2.5 align-top">
         <span className="font-mono text-xs font-semibold text-primary">
           {campanha.codigo || "—"}
         </span>
       </td>
-      <td className="whitespace-nowrap px-4 py-4 text-muted">
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
         {formatMesAnoShort(campanha.mes_referencia) || "—"}
       </td>
-      <td className="whitespace-nowrap px-4 py-4 text-muted">
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
         {fmtDate(campanha.inicio)}
       </td>
-      <td className="whitespace-nowrap px-4 py-4 text-muted">
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
         {fmtDate(campanha.fim)}
       </td>
-      <td className="px-4 py-4">
+      <td className="px-3 py-2.5 align-top">
         <p className="font-medium text-foreground">{campanha.name}</p>
       </td>
-      <td className="whitespace-nowrap px-4 py-4 text-foreground">
-        {fmtBudget(campanha.budget_total ?? campanha.budget, campanha.moeda)}
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-foreground">
+        {fmtBudgetNumber(campanha.budget_total ?? campanha.budget)}
       </td>
-      <td
-        className="px-4 py-4 text-muted"
-        title={eventosTooltip(campanha.eventos_pagos, campanha.moeda)}
-      >
-        {summarizeEventosCount(campanha.eventos_pagos)}
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
+        {fmtMoedaShort(campanha.moeda)}
       </td>
-      <td className="whitespace-nowrap px-4 py-4">
+      <td className="px-3 py-2.5 align-top text-foreground">
+        {renderEventoCol(campanha.eventos_pagos)}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
+        {renderPoCol(campanha.eventos_pagos, campanha.moeda)}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
+        {fmtMmp(campanha.mmp)}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2.5 align-top">
         <StatusBadge status={campanha.status} />
       </td>
-      <td className="whitespace-nowrap px-4 py-4">
+      <td className="whitespace-nowrap px-3 py-2.5 align-top">
         {campanha.parceria_wave ? (
           <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
             Sim
@@ -473,7 +484,7 @@ function CampanhaRow({
           </span>
         )}
       </td>
-      <td className="px-4 py-4">
+      <td className="px-3 py-2.5 align-top">
         <div className="flex items-center justify-end gap-1">
           {canDelete && (
             <button
@@ -504,29 +515,56 @@ function fmtDate(s: string | null | undefined): string {
   return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
 
-function fmtBudget(
-  budget: number | null | undefined,
-  moeda: Moeda | string | null | undefined
-): string {
-  return formatCurrency(budget, moeda);
+/** Budget como numero PT-BR sem simbolo — a moeda fica em coluna propria. */
+function fmtBudgetNumber(budget: number | null | undefined): string {
+  if (budget == null || Number.isNaN(budget)) return "—";
+  return formatNumberPtBr(budget);
 }
 
-function summarizeEventosCount(eventos: CampanhaEvento[] | undefined): string {
+/** Moeda compacta pra coluna propria: R$ / U$. */
+function fmtMoedaShort(moeda: Moeda | string | null | undefined): string {
+  return moeda === "USD" ? "U$" : "R$";
+}
+
+/** mmp capitalizado: appsflyer -> Appsflyer, adjust -> Adjust. */
+function fmtMmp(mmp: CampanhaMMP | string | null | undefined): string {
+  if (!mmp) return "—";
+  return mmp.charAt(0).toUpperCase() + mmp.slice(1);
+}
+
+/**
+ * Coluna "Evento pago": nomes dos eventos empilhados (1 linha por evento),
+ * na ordem do array. Casa linha-a-linha com a coluna PO.
+ */
+function renderEventoCol(eventos: CampanhaEvento[] | undefined) {
   if (!eventos || eventos.length === 0) return "—";
-  return `${eventos.length} ${eventos.length === 1 ? "evento" : "eventos"}`;
+  return (
+    <div className="flex flex-col gap-0.5">
+      {eventos.map((ev, i) => (
+        <span key={ev.id ?? `${ev.nome}-${i}`} className="whitespace-nowrap">
+          {ev.nome}
+        </span>
+      ))}
+    </div>
+  );
 }
 
-function eventosTooltip(
+/**
+ * Coluna "PO": target_cpa de cada evento, empilhado e alinhado com a coluna
+ * Evento pago (mesma ordem). PO ausente -> "—".
+ */
+function renderPoCol(
   eventos: CampanhaEvento[] | undefined,
   moeda: Moeda | string | null | undefined
-): string {
-  if (!eventos || eventos.length === 0) return "";
-  // Lista os eventos com o PO (CPA) contratado de cada um. O payout (repasse)
-  // nao vive mais no evento — ele e por publisher.
-  const parts = eventos.map((ev) => {
-    const cpa =
-      ev.target_cpa != null ? ` (${formatCurrency(ev.target_cpa, moeda)})` : "";
-    return `${ev.nome}${cpa}`;
-  });
-  return parts.join(", ");
+) {
+  if (!eventos || eventos.length === 0) return "—";
+  return (
+    <div className="flex flex-col gap-0.5">
+      {eventos.map((ev, i) => (
+        <span key={ev.id ?? `${ev.nome}-${i}`} className="whitespace-nowrap">
+          {ev.target_cpa != null ? formatCurrency(ev.target_cpa, moeda) : "—"}
+        </span>
+      ))}
+    </div>
+  );
 }
