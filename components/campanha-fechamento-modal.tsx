@@ -31,6 +31,7 @@ import {
   sanitizeNumberInput
 } from "@/lib/format";
 import type {
+  CampanhaPublisherRenegociacao,
   Client,
   Fechamento,
   FechamentoPublisher,
@@ -222,22 +223,74 @@ export function CampanhaFechamentoModal({
     return m;
   }, [publishersCadastrados]);
 
-  const formatPoAcordado = useCallback(
-    (publisherName: string): string => {
+  const renderPoAcordado = useCallback(
+    (publisherName: string) => {
       const pc = poAcordadoByPublisher.get(
         publisherName.trim().toLowerCase()
       );
       if (!pc || !pc.po_acordado || pc.po_acordado.length === 0) return "—";
       // PO acordado e na moeda do publisher cadastrado (default USD), nao na da campanha.
       const pcMoeda = pc.moeda ?? moeda;
-      return pc.po_acordado
-        .map(
-          (po) =>
-            `${po.evento_nome}: ${
-              po.payout != null ? formatCurrency(po.payout, pcMoeda) : "—"
-            }`
-        )
-        .join(" · ");
+      // Renegociacoes indexadas por evento (mais recente primeiro).
+      const renegByEvento = new Map<string, CampanhaPublisherRenegociacao[]>();
+      for (const r of pc.renegociacoes || []) {
+        if (!r?.evento_nome) continue;
+        const key = r.evento_nome.trim().toLowerCase();
+        const arr = renegByEvento.get(key) || [];
+        arr.push(r);
+        renegByEvento.set(key, arr);
+      }
+      return (
+        <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          {pc.po_acordado.map((po, i) => {
+            const renegs = (renegByEvento.get(po.evento_nome.trim().toLowerCase()) || [])
+              .slice()
+              .sort((a, b) => a.changed_at.localeCompare(b.changed_at));
+            const last = renegs.length > 0 ? renegs[renegs.length - 1] : null;
+            // Cadeia completa pro tooltip (ex: "$10 → $8 (06/jun) → $7 (08/jun)").
+            const chainTitle =
+              renegs.length > 0
+                ? renegs
+                    .map(
+                      (r) =>
+                        `${
+                          r.payout_anterior != null
+                            ? formatCurrency(r.payout_anterior, pcMoeda)
+                            : "—"
+                        } → ${
+                          r.payout_novo != null
+                            ? formatCurrency(r.payout_novo, pcMoeda)
+                            : "—"
+                        } (${fmtDateShort(r.changed_at)})`
+                    )
+                    .join("  ·  ")
+                : undefined;
+            return (
+              <span key={`${po.evento_nome}-${i}`} className="inline-flex items-center gap-1">
+                <span>
+                  {po.evento_nome}:{" "}
+                  {po.payout != null ? formatCurrency(po.payout, pcMoeda) : "—"}
+                </span>
+                {last && (
+                  <span
+                    className="rounded bg-amber-500/10 px-1 py-0.5 text-[11px] font-medium text-amber-300"
+                    title={chainTitle}
+                  >
+                    (era{" "}
+                    {last.payout_anterior != null
+                      ? formatCurrency(last.payout_anterior, pcMoeda)
+                      : "—"}{" "}
+                    · {fmtDateShort(last.changed_at)})
+                  </span>
+                )}
+                {i < pc.po_acordado.length - 1 && (
+                  <span className="text-muted/60">·</span>
+                )}
+              </span>
+            );
+          })}
+        </span>
+      );
     },
     [poAcordadoByPublisher, moeda]
   );
@@ -663,7 +716,7 @@ export function CampanhaFechamentoModal({
                               />
                             </td>
                             <td className="px-3 py-2 text-left text-xs text-muted">
-                              {formatPoAcordado(p.publisher_name)}
+                              {renderPoAcordado(p.publisher_name)}
                             </td>
                             <td className="px-3 py-2 text-right font-mono text-xs text-muted">
                               {p.spend_real_display}
@@ -847,6 +900,21 @@ function fmtDateTime(s: string | null | undefined): string {
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit"
+    });
+  } catch {
+    return s;
+  }
+}
+
+/** Data curta PT-BR (ex: "06/jun") pro indicador de renegociacao. */
+function fmtDateShort(s: string | null | undefined): string {
+  if (!s) return "";
+  try {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "short"
     });
   } catch {
     return s;

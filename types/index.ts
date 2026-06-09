@@ -49,6 +49,17 @@ export interface CampanhaPublisherPayout {
 }
 
 /**
+ * Renegociacao do payout de um publisher num evento (historico).
+ * Lista vinda do backend ordenada por changed_at (mais antiga -> mais recente).
+ */
+export interface CampanhaPublisherRenegociacao {
+  evento_nome: string;
+  payout_anterior: number | null;
+  payout_novo: number | null;
+  changed_at: string;
+}
+
+/**
  * Media source (PID) de um publisher. Tem estado ativo/inativo: ao desativar
  * exige justificativa (`deactivated_reason`) e guarda DUAS datas:
  * `deactivated_at` = data EFETIVA da pausa (informada pelo user, default hoje);
@@ -290,6 +301,9 @@ export interface FechamentoPublisherCadastrado {
   publisher_name: string;
   media_sources: CampanhaMediaSource[];
   po_acordado: CampanhaPublisherPayout[];
+  // Historico de renegociacao do payout (era X -> agora Y), por evento.
+  // Ordenado por changed_at. Ausente/[] quando nao houve renegociacao.
+  renegociacoes?: CampanhaPublisherRenegociacao[];
   // Moeda do PO acordado desse publisher (cadastro). Default 'USD'.
   moeda: Moeda;
 }
