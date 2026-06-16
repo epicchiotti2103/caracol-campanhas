@@ -36,7 +36,8 @@ import type {
   Fechamento,
   FechamentoPublisher,
   FechamentoPublisherCadastrado,
-  FechamentoUpsertPayload
+  FechamentoUpsertPayload,
+  Moeda
 } from "@/types";
 
 interface Props {
@@ -60,6 +61,7 @@ interface PublisherRow {
   spend_real_display: string; // read-only
   spend_real_raw: number | null;
   spend_final_input: string; // mascara PT-BR
+  moeda: Moeda; // moeda de PAGAMENTO do publisher (default USD)
   p360_event_rate: number | null; // % fraud events (Protect 360 AF) — read-only
   notes: string;
 }
@@ -74,6 +76,7 @@ function toRow(p: FechamentoPublisher, moeda: string | null | undefined): Publis
     spend_real_raw: p.spend_real ?? null,
     spend_final_input:
       p.spend_final != null ? blurFormatNumberPtBr(String(p.spend_final), 2) : "",
+    moeda: p.moeda === "BRL" ? "BRL" : "USD",
     p360_event_rate: p.p360_event_rate ?? null,
     notes: p.notes || ""
   };
@@ -199,17 +202,48 @@ export function CampanhaFechamentoModal({
     return { diff, pct };
   }, [spendFinalNumber, spendRealRaw]);
 
-  const publishersSum = useMemo(() => {
-    return publishers.reduce((acc, p) => {
+  // Soma dos pagamentos dos publishers AGRUPADA por moeda (cada pub pode ter
+  // moeda diferente da campanha). Ex: { USD: 1000, BRL: 500 }.
+  const publishersSumByMoeda = useMemo(() => {
+    const acc: Partial<Record<Moeda, number>> = {};
+    for (const p of publishers) {
       const n = parseNumberPtBr(p.spend_final_input);
-      return acc + (Number.isFinite(n) ? n : 0);
-    }, 0);
+      const v = Number.isFinite(n) ? n : 0;
+      acc[p.moeda] = (acc[p.moeda] ?? 0) + v;
+    }
+    return acc;
   }, [publishers]);
 
+  // String formatada da soma (ex: "$ 1.000,00 + R$ 500,00").
+  const publishersSumLabel = useMemo(() => {
+    const parts: string[] = [];
+    // Ordem estavel: USD primeiro, BRL depois.
+    (["USD", "BRL"] as Moeda[]).forEach((m) => {
+      const v = publishersSumByMoeda[m];
+      if (v != null) parts.push(formatCurrency(v, m));
+    });
+    return parts.length > 0 ? parts.join(" + ") : formatCurrency(0, "USD");
+  }, [publishersSumByMoeda]);
+
+  // Moeda de RECEBIMENTO (campanha) normalizada.
+  const moedaRecebimento: Moeda = moeda === "USD" ? "USD" : "BRL";
+
+  // So compara soma x spend final da campanha quando TODOS os pubs pagam na
+  // mesma moeda do recebimento. Com moedas mistas/distintas, nao da pra somar
+  // direto — suaviza o aviso (nao mostra mismatch numerico).
+  const sumComparable = useMemo(() => {
+    if (publishers.length === 0) return null;
+    const moedasUsadas = Object.keys(publishersSumByMoeda) as Moeda[];
+    if (moedasUsadas.length !== 1 || moedasUsadas[0] !== moedaRecebimento) {
+      return null;
+    }
+    return publishersSumByMoeda[moedaRecebimento] ?? 0;
+  }, [publishers.length, publishersSumByMoeda, moedaRecebimento]);
+
   const publishersMismatch = useMemo(() => {
-    if (publishers.length === 0) return false;
-    return Math.abs(publishersSum - spendFinalNumber) > 0.01;
-  }, [publishers.length, publishersSum, spendFinalNumber]);
+    if (sumComparable == null) return false;
+    return Math.abs(sumComparable - spendFinalNumber) > 0.01;
+  }, [sumComparable, spendFinalNumber]);
 
   // PO acordado (cadastro) indexado por nome do publisher (case-insensitive).
   // Referencia pro user ter o numero na frente — SEM calculo de margem.
@@ -311,6 +345,7 @@ export function CampanhaFechamentoModal({
         spend_real_display: "—",
         spend_real_raw: null,
         spend_final_input: "",
+        moeda: "USD",
         p360_event_rate: null,
         notes: ""
       }
@@ -343,6 +378,7 @@ export function CampanhaFechamentoModal({
         publisher_name: name,
         platform: p.platform || null,
         spend_final: spend,
+        moeda: p.moeda,
         p360_event_rate: p.p360_event_rate,
         notes: p.notes.trim() || null
       });
@@ -673,8 +709,14 @@ export function CampanhaFechamentoModal({
                           <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
                             Spend real
                           </th>
-                          <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
-                            Spend final {moedaPrefix}
+                          <th
+                            className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
+                            title="Valor pago ao publisher (repasse). A moeda e por publisher (default USD), independente da moeda de recebimento da campanha."
+                          >
+                            Pagamento
+                          </th>
+                          <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-muted">
+                            Moeda
                           </th>
                           <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted">
                             % Fraud Events
@@ -722,28 +764,49 @@ export function CampanhaFechamentoModal({
                               {p.spend_real_display}
                             </td>
                             <td className="px-3 py-2 text-right">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                value={p.spend_final_input}
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="text-xs text-muted">
+                                  {moedaShort(p.moeda)}
+                                </span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={p.spend_final_input}
+                                  onChange={(e) =>
+                                    updatePub(idx, {
+                                      spend_final_input: sanitizeNumberInput(
+                                        e.target.value
+                                      )
+                                    })
+                                  }
+                                  onBlur={(e) =>
+                                    updatePub(idx, {
+                                      spend_final_input: blurFormatNumberPtBr(
+                                        e.target.value
+                                      )
+                                    })
+                                  }
+                                  disabled={readOnly}
+                                  placeholder="0,00"
+                                  className="w-28 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
+                                />
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <select
+                                value={p.moeda}
                                 onChange={(e) =>
                                   updatePub(idx, {
-                                    spend_final_input: sanitizeNumberInput(
-                                      e.target.value
-                                    )
-                                  })
-                                }
-                                onBlur={(e) =>
-                                  updatePub(idx, {
-                                    spend_final_input: blurFormatNumberPtBr(
-                                      e.target.value
-                                    )
+                                    moeda: e.target.value === "BRL" ? "BRL" : "USD"
                                   })
                                 }
                                 disabled={readOnly}
-                                placeholder="0,00"
-                                className="w-32 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
-                              />
+                                aria-label="Moeda de pagamento do publisher"
+                                className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
+                              >
+                                <option value="USD">USD</option>
+                                <option value="BRL">BRL</option>
+                              </select>
                             </td>
                             <td className="px-3 py-2 text-right font-mono text-xs text-muted">
                               {p.p360_event_rate != null
@@ -769,12 +832,15 @@ export function CampanhaFechamentoModal({
                         <tr className="border-t border-border bg-background/40">
                           <td
                             className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
-                            colSpan={4}
+                            colSpan={3}
                           >
-                            Soma
+                            Soma (pagamentos)
                           </td>
-                          <td className="px-3 py-2 text-right font-mono text-sm text-foreground">
-                            {formatCurrency(publishersSum, moeda)}
+                          <td
+                            className="px-3 py-2 text-right font-mono text-sm text-foreground"
+                            colSpan={2}
+                          >
+                            {publishersSumLabel}
                           </td>
                           <td className="px-3 py-2" colSpan={readOnly ? 1 : 2} />
                         </tr>
@@ -783,15 +849,15 @@ export function CampanhaFechamentoModal({
                   </div>
                 )}
 
-                {publishersMismatch && (
+                {publishersMismatch && sumComparable != null && (
                   <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
                     <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
                     <p className="text-xs text-amber-200">
-                      A soma dos publishers (
-                      {formatCurrency(publishersSum, moeda)}) e diferente do
-                      spend final da campanha (
-                      {formatCurrency(spendFinalNumber, moeda)}). Ajuste se for
-                      o caso — nao bloqueia o salvamento.
+                      A soma dos pagamentos (
+                      {formatCurrency(sumComparable, moedaRecebimento)}) e
+                      diferente do spend final da campanha (
+                      {formatCurrency(spendFinalNumber, moedaRecebimento)}).
+                      Ajuste se for o caso — nao bloqueia o salvamento.
                     </p>
                   </div>
                 )}

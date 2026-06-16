@@ -294,6 +294,9 @@ export interface FechamentoPublisher {
   locked_invoice_id?: string | null;
   // Derivado quando vem do stub pre-pop (spend real do AppsFlyer no mes).
   spend_real?: number | null;
+  // Moeda de PAGAMENTO desse publisher (repasse). Independente da moeda de
+  // recebimento (campanha). Default 'USD'. Backend retorna sempre.
+  moeda?: Moeda;
 }
 
 /**
@@ -348,6 +351,8 @@ export interface FechamentoUpsertPayload {
     installs_or_conversions?: number | null;
     p360_event_rate?: number | null;
     notes?: string | null;
+    // Moeda de pagamento do publisher. Default 'USD' se ausente (backend).
+    moeda?: Moeda;
   }>;
 }
 
