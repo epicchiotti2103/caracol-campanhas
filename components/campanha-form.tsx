@@ -7,6 +7,7 @@ import { Loader2, AlertCircle, Plus, Trash2, Ban, RotateCcw } from "lucide-react
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
+import { todayIso } from "@/components/reason-date-modal";
 import {
   blurFormatNumberPtBr,
   formatNumberPtBr,
@@ -19,9 +20,13 @@ import type {
   Campanha,
   CampanhaApp,
   CampanhaBudgetMode,
+  CampanhaCapHistorico,
+  CampanhaCapTipo,
+  CampanhaCapUnidade,
   CampanhaEvento,
   CampanhaMMP,
   CampanhaPublisher,
+  CampanhaPublisherCap,
   CampanhaStatus,
   CampanhaTipo,
   Moeda
@@ -105,11 +110,62 @@ interface MediaSourceRow {
   deactivated_registered_at: string | null;
 }
 
+// Cap de eventos do publisher no form (valor como string mascarada PT-BR).
+interface CapRow {
+  tipo: CampanhaCapTipo;
+  unidade: CampanhaCapUnidade;
+  valor: string; // mascara PT-BR
+  vigencia_inicio: string; // YYYY-MM-DD
+  vigencia_fim: string; // YYYY-MM-DD (vazio = aberta)
+  // Snapshot do cap que veio do backend (pra detectar mudanca de valor/tipo e
+  // pedir data efetiva da renegociacao). null = publisher novo / sem cap salvo.
+  initial: {
+    tipo: CampanhaCapTipo;
+    unidade: CampanhaCapUnidade;
+    valor: number | null;
+    vigencia_inicio: string | null;
+    vigencia_fim: string | null;
+  } | null;
+}
+
 interface PublisherRow {
   nome: string;
   media_sources: MediaSourceRow[]; // lista dinamica de objetos
   payouts: PublisherPayoutRow[];
   moeda: Moeda; // moeda do PO desse publisher (aplica a todos os POs)
+  cap: CapRow;
+  caps_historico: CampanhaCapHistorico[]; // read-only, vinda do backend
+}
+
+function emptyCapRow(): CapRow {
+  return {
+    tipo: "nenhum",
+    unidade: "eventos",
+    valor: "",
+    vigencia_inicio: "",
+    vigencia_fim: "",
+    initial: null
+  };
+}
+
+function capToRow(cap: CampanhaPublisherCap | null | undefined): CapRow {
+  if (!cap || cap.tipo === "nenhum" || !cap.tipo) return emptyCapRow();
+  return {
+    tipo: cap.tipo,
+    unidade: cap.unidade || "eventos",
+    valor: cap.valor != null ? formatNumberPtBr(cap.valor) : "",
+    vigencia_inicio: cap.vigencia_inicio ? cap.vigencia_inicio.slice(0, 10) : "",
+    vigencia_fim: cap.vigencia_fim ? cap.vigencia_fim.slice(0, 10) : "",
+    initial: {
+      tipo: cap.tipo,
+      unidade: cap.unidade || "eventos",
+      valor: cap.valor ?? null,
+      vigencia_inicio: cap.vigencia_inicio
+        ? cap.vigencia_inicio.slice(0, 10)
+        : null,
+      vigencia_fim: cap.vigencia_fim ? cap.vigencia_fim.slice(0, 10) : null
+    }
+  };
 }
 
 function emptyMediaSourceRow(): MediaSourceRow {
@@ -162,7 +218,9 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
       evento_nome: po.evento_nome ?? "",
       payout: po.payout != null ? formatNumberPtBr(po.payout) : ""
     })),
-    moeda: p.moeda === "BRL" ? "BRL" : "USD"
+    moeda: p.moeda === "BRL" ? "BRL" : "USD",
+    cap: capToRow(p.cap),
+    caps_historico: Array.isArray(p.caps_historico) ? p.caps_historico : []
   };
 }
 
@@ -287,6 +345,23 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  // Cap renegociado: quando o user muda o valor de um cap ja vigente, abrimos
+  // um modal pedindo a data efetiva da mudanca (igual renegociacao de payout).
+  // `capEffectiveDate` guarda a data confirmada; `pendingSubmit` indica que o
+  // submit foi adiado esperando essa data; `capRenegPublishers` so pro texto.
+  const [capEffectiveDate, setCapEffectiveDate] = useState<string>("");
+  const [pendingSubmit, setPendingSubmit] = useState(false);
+  const [capRenegPublishers, setCapRenegPublishers] = useState<string[]>([]);
+
+  // Quando a data efetiva do cap e confirmada no modal, retoma o submit.
+  useEffect(() => {
+    if (pendingSubmit && capEffectiveDate) {
+      setPendingSubmit(false);
+      void handleSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capEffectiveDate, pendingSubmit]);
+
   // ---- helpers eventos ----
   const updateEvento = (idx: number, patch: Partial<EventoRow>) => {
     setEventos((prev) =>
@@ -381,7 +456,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         // Ja inicia com 1 linha de payout por evento atual (vazias).
         payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" })),
         // Default USD em publisher novo (padrao do backend).
-        moeda: "USD"
+        moeda: "USD",
+        cap: emptyCapRow(),
+        caps_historico: []
       }
     ]);
   const removePublisher = (idx: number) =>
@@ -465,8 +542,16 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       )
     );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // cap de eventos dentro de um publisher
+  const updatePublisherCap = (pubIdx: number, patch: Partial<CapRow>) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx ? { ...pub, cap: { ...pub.cap, ...patch } } : pub
+      )
+    );
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     setError("");
 
     const trimmedName = name.trim();
@@ -575,23 +660,28 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     }
 
     // Publishers — cada um com media sources (envia string[] de nomes; o backend
-    // reconcilia active/reason/data por nome) + PO por evento.
+    // reconcilia active/reason/data por nome) + PO por evento + cap de eventos.
     const cleanPublishers: {
       nome: string;
       media_sources: string[];
       payouts: { evento_nome: string; payout: number | null }[];
       moeda: Moeda;
+      cap: CampanhaPublisherCap;
       ordem: number;
     }[] = [];
+    // Publishers cujo cap MUDOU de valor numa campanha que ja tinha cap vigente
+    // -> precisam de data efetiva (renegociacao). Coletamos pra pedir a data.
+    const capsRenegociados: string[] = [];
     for (let i = 0; i < publishers.length; i++) {
       const pub = publishers[i];
       const nomeTrim = pub.nome.trim();
       const cleanMs = pub.media_sources
         .map((ms) => ms.name.trim())
         .filter(Boolean);
-      // Pula publishers totalmente vazios (sem nome, sem ms, sem payout).
+      // Pula publishers totalmente vazios (sem nome, sem ms, sem payout, sem cap).
       const hasPayout = pub.payouts.some((po) => po.payout.trim());
-      if (!nomeTrim && cleanMs.length === 0 && !hasPayout) continue;
+      const hasCap = pub.cap.tipo !== "nenhum";
+      if (!nomeTrim && cleanMs.length === 0 && !hasPayout && !hasCap) continue;
       if (!nomeTrim) {
         setError(`Publisher ${i + 1}: informe o nome (ou remova a linha).`);
         return;
@@ -615,13 +705,86 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         cleanPayouts.push({ evento_nome: evNome, payout: payoutVal });
       }
 
+      // ---- Cap de eventos ----
+      const capRow = pub.cap;
+      let capPayload: CampanhaPublisherCap;
+      if (capRow.tipo === "nenhum") {
+        capPayload = {
+          tipo: "nenhum",
+          unidade: "eventos",
+          valor: null,
+          vigencia_inicio: null,
+          vigencia_fim: null
+        };
+      } else {
+        const rawValor = capRow.valor.trim();
+        const valorNum = rawValor ? parseNumberPtBr(rawValor) : NaN;
+        if (!rawValor || Number.isNaN(valorNum) || valorNum < 0) {
+          setError(
+            `Publisher "${nomeTrim}": informe um valor de cap valido (ou tipo Nenhum).`
+          );
+          return;
+        }
+        if (!capRow.vigencia_inicio) {
+          setError(
+            `Publisher "${nomeTrim}": informe a data de inicio da vigencia do cap.`
+          );
+          return;
+        }
+        if (
+          capRow.vigencia_fim &&
+          capRow.vigencia_fim < capRow.vigencia_inicio
+        ) {
+          setError(
+            `Publisher "${nomeTrim}": fim da vigencia do cap antes do inicio.`
+          );
+          return;
+        }
+        capPayload = {
+          tipo: capRow.tipo,
+          unidade: capRow.unidade,
+          valor: valorNum,
+          vigencia_inicio: capRow.vigencia_inicio,
+          vigencia_fim: capRow.vigencia_fim || null
+        };
+        // Renegociacao: ja existia cap vigente (initial) e o valor/tipo/unidade
+        // mudou -> precisa de data efetiva. Mudanca de vigencia pura nao conta.
+        const prev = capRow.initial;
+        const changedMaterial =
+          prev != null &&
+          (prev.tipo !== capPayload.tipo ||
+            prev.unidade !== capPayload.unidade ||
+            (prev.valor ?? null) !== (capPayload.valor ?? null));
+        if (changedMaterial) {
+          capsRenegociados.push(nomeTrim);
+          // data_efetiva preenchida depois (modal); marca como pendente.
+          (capPayload as any).__needsEfetiva = true;
+        }
+      }
+
       cleanPublishers.push({
         nome: nomeTrim,
         media_sources: cleanMs,
         payouts: cleanPayouts,
         moeda: pub.moeda === "BRL" ? "BRL" : "USD",
+        cap: capPayload,
         ordem: i
       });
+    }
+
+    // Se ha cap(s) renegociado(s) e ainda nao temos a data efetiva, abre modal
+    // e adia o submit. O modal chama submitWith(dataEfetiva) ao confirmar.
+    if (capsRenegociados.length > 0 && !capEffectiveDate) {
+      setPendingSubmit(true);
+      setCapRenegPublishers(capsRenegociados);
+      return;
+    }
+    // Aplica a data efetiva nos caps renegociados.
+    for (const cp of cleanPublishers) {
+      if ((cp.cap as any).__needsEfetiva) {
+        cp.cap.data_efetiva = capEffectiveDate || todayIso();
+        delete (cp.cap as any).__needsEfetiva;
+      }
     }
 
     const mesRefIso = `${mesRefAno}-${String(mesRefMes).padStart(2, "0")}-01`;
@@ -675,6 +838,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       }
     } catch (err: any) {
       setError(err?.message || "Falha ao salvar campanha.");
+      // Permite re-prompt da data efetiva numa nova tentativa.
+      setCapEffectiveDate("");
+      setCapRenegPublishers([]);
     } finally {
       setSubmitting(false);
     }
@@ -1367,6 +1533,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                   </div>
                 )}
               </div>
+
+              {/* Cap de eventos */}
+              <CapBlock
+                cap={pub.cap}
+                history={pub.caps_historico}
+                onChange={(patch) => updatePublisherCap(pubIdx, patch)}
+              />
             </div>
           ))}
           <button
@@ -1423,6 +1596,17 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
             : "Criar campanha"}
         </button>
       </div>
+
+      {pendingSubmit && (
+        <CapEffectiveDateModal
+          publishers={capRenegPublishers}
+          onConfirm={(date) => setCapEffectiveDate(date)}
+          onCancel={() => {
+            setPendingSubmit(false);
+            setCapRenegPublishers([]);
+          }}
+        />
+      )}
     </form>
   );
 }
@@ -1433,6 +1617,205 @@ function fmtDateBr(s: string | null | undefined): string {
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   const d = new Date(s);
   return isNaN(d.getTime()) ? "" : d.toLocaleDateString("pt-BR");
+}
+
+function capTipoLabel(t: CampanhaCapTipo): string {
+  return t === "mensal" ? "Mensal" : t === "diario" ? "Diario" : "Nenhum";
+}
+
+function capUnidadeLabel(u: CampanhaCapUnidade): string {
+  return u === "usd" ? "US$" : "eventos";
+}
+
+/** Resumo de uma vigencia de cap (ex: "Mensal · 1.000 eventos · 01/06 → atual"). */
+function capHistLabel(h: CampanhaCapHistorico): string {
+  const valor = h.valor != null ? formatNumberPtBr(h.valor) : "—";
+  const unid = capUnidadeLabel((h.unidade || "eventos") as CampanhaCapUnidade);
+  const ini = h.vigencia_inicio ? fmtDateBr(h.vigencia_inicio) : "—";
+  const fim = h.vigencia_fim ? fmtDateBr(h.vigencia_fim) : "atual";
+  return `${capTipoLabel((h.tipo || "nenhum") as CampanhaCapTipo)} · ${valor} ${unid} · ${ini} → ${fim}`;
+}
+
+// Bloco "Cap de eventos" de um publisher: tipo (Nenhum/Mensal/Diario), unidade
+// (Eventos/US$), valor (mascara PT-BR) e vigencia. Mostra o historico read-only.
+function CapBlock({
+  cap,
+  history,
+  onChange
+}: {
+  cap: CapRow;
+  history: CampanhaCapHistorico[];
+  onChange: (patch: Partial<CapRow>) => void;
+}) {
+  const active = cap.tipo !== "nenhum";
+  return (
+    <div className="rounded-lg border border-border bg-surface/40 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+        Cap de eventos
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[150px,130px,1fr]">
+        <Field label="Tipo">
+          <select
+            value={cap.tipo}
+            onChange={(e) =>
+              onChange({ tipo: e.target.value as CampanhaCapTipo })
+            }
+            className={inputCls}
+            aria-label="Tipo de cap"
+          >
+            {[
+              { value: "nenhum", label: "Nenhum" },
+              { value: "mensal", label: "Mensal" },
+              { value: "diario", label: "Diario" }
+            ].map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {active && (
+          <Field label="Unidade">
+            <select
+              value={cap.unidade}
+              onChange={(e) =>
+                onChange({ unidade: e.target.value as CampanhaCapUnidade })
+              }
+              className={inputCls}
+              aria-label="Unidade do cap"
+            >
+              <option value="eventos">Eventos</option>
+              <option value="usd">US$</option>
+            </select>
+          </Field>
+        )}
+        {active && (
+          <Field
+            label={`Valor (${capUnidadeLabel(cap.unidade)}${
+              cap.tipo === "diario" ? "/dia" : "/mes"
+            })`}
+          >
+            <PtBrCurrencyInput
+              value={cap.valor}
+              onChange={(v) => onChange({ valor: v })}
+              prefix={cap.unidade === "usd" ? "US$" : "#"}
+              aria-label="Valor do cap"
+            />
+          </Field>
+        )}
+      </div>
+      {active && (
+        <>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Vigencia: inicio">
+              <input
+                type="date"
+                value={cap.vigencia_inicio}
+                onChange={(e) =>
+                  onChange({ vigencia_inicio: e.target.value })
+                }
+                className={inputCls}
+                aria-label="Inicio da vigencia do cap"
+              />
+            </Field>
+            <Field label="Vigencia: fim (opcional)">
+              <input
+                type="date"
+                value={cap.vigencia_fim}
+                onChange={(e) => onChange({ vigencia_fim: e.target.value })}
+                className={inputCls}
+                aria-label="Fim da vigencia do cap"
+              />
+            </Field>
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {cap.tipo === "diario"
+              ? "Cap diario corta dia-a-dia (sem netting)."
+              : "Cap mensal corta no acumulado do mes."}
+            {cap.initial != null &&
+              " Mudar o valor pede a data efetiva (vira nova vigencia)."}
+          </p>
+        </>
+      )}
+      {history && history.length > 0 && (
+        <div className="mt-3 border-t border-border pt-2">
+          <p className="mb-1 text-xs font-medium text-muted">
+            Historico de vigencias
+          </p>
+          <ul className="space-y-0.5">
+            {history
+              .slice()
+              .sort((a, b) =>
+                (a.vigencia_inicio || "").localeCompare(b.vigencia_inicio || "")
+              )
+              .map((h, i) => (
+                <li key={i} className="text-xs text-muted">
+                  • {capHistLabel(h)}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Modal simples (so data) pra capturar a data efetiva da renegociacao do cap.
+// Reusa o visual do ReasonDateModal, mas sem o select de motivo.
+function CapEffectiveDateModal({
+  publishers,
+  onConfirm,
+  onCancel
+}: {
+  publishers: string[];
+  onConfirm: (date: string) => void;
+  onCancel: () => void;
+}) {
+  const [date, setDate] = useState(todayIso());
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="mb-2 text-base font-semibold text-foreground">
+          Data efetiva da mudanca de cap
+        </h3>
+        <p className="mb-4 text-sm text-muted">
+          O cap mudou para{" "}
+          {publishers.length === 1
+            ? `o publisher "${publishers[0]}"`
+            : `${publishers.length} publishers`}
+          . Informe a partir de que dia o novo cap vale — vira uma nova vigencia
+          (o anterior fica no historico).
+        </p>
+        <label className="mb-1 block text-xs font-medium text-muted">
+          Data efetiva
+        </label>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          autoFocus
+          className={inputCls + " mb-4"}
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => date && onConfirm(date)}
+            disabled={!date}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            Confirmar e salvar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Linha de media source dentro do form. Se a ms ja tem id (esta salva), mostra

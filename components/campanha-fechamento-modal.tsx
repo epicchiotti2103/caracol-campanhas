@@ -10,7 +10,7 @@
 // 2) User edita cliente, spend_final, publishers e salva (POST upsert).
 // 3) Locked: read-only. Botao "Destravar" volta pra editavel.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Loader2,
@@ -30,8 +30,12 @@ import {
   parseNumberPtBr,
   sanitizeNumberInput
 } from "@/lib/format";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type {
+  CampanhaCapTipo,
+  CampanhaCapUnidade,
   CampanhaPublisherRenegociacao,
+  CapBreakdownPeriodo,
   Client,
   Fechamento,
   FechamentoPublisher,
@@ -64,6 +68,22 @@ interface PublisherRow {
   moeda: Moeda; // moeda de PAGAMENTO do publisher (default USD)
   p360_event_rate: number | null; // % fraud events (Protect 360 AF) — read-only
   notes: string;
+
+  // ---- Cap de eventos (so quando o publisher tem cap; vem do backend) ----
+  cap_tipo: CampanhaCapTipo | null; // mensal|diario|null
+  cap_unidade: CampanhaCapUnidade | null;
+  realizado_qty: number | null;
+  realizado_spend: number | null;
+  valido_qty: number | null;
+  excedente_qty: number | null;
+  spend_valido: number | null;
+  spend_excedente: number | null;
+  excedente_aprovado: boolean;
+  cap_breakdown: CapBreakdownPeriodo[];
+}
+
+function hasCap(p: PublisherRow): boolean {
+  return p.cap_tipo === "mensal" || p.cap_tipo === "diario";
 }
 
 function toRow(p: FechamentoPublisher, moeda: string | null | undefined): PublisherRow {
@@ -78,7 +98,17 @@ function toRow(p: FechamentoPublisher, moeda: string | null | undefined): Publis
       p.spend_final != null ? blurFormatNumberPtBr(String(p.spend_final), 2) : "",
     moeda: p.moeda === "BRL" ? "BRL" : "USD",
     p360_event_rate: p.p360_event_rate ?? null,
-    notes: p.notes || ""
+    notes: p.notes || "",
+    cap_tipo: (p.cap_tipo as CampanhaCapTipo | null) ?? null,
+    cap_unidade: (p.cap_unidade as CampanhaCapUnidade | null) ?? null,
+    realizado_qty: p.realizado_qty ?? null,
+    realizado_spend: p.realizado_spend ?? null,
+    valido_qty: p.valido_qty ?? null,
+    excedente_qty: p.excedente_qty ?? null,
+    spend_valido: p.spend_valido ?? null,
+    spend_excedente: p.spend_excedente ?? null,
+    excedente_aprovado: p.excedente_aprovado === true,
+    cap_breakdown: Array.isArray(p.cap_breakdown) ? p.cap_breakdown : []
   };
 }
 
@@ -106,6 +136,15 @@ export function CampanhaFechamentoModal({
   const [spendRealRaw, setSpendRealRaw] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
   const [publishers, setPublishers] = useState<PublisherRow[]>([]);
+  // Linhas de cap com o breakdown expandido (por indice de publisher).
+  const [expandedCaps, setExpandedCaps] = useState<Set<number>>(new Set());
+  const toggleCapExpanded = (idx: number) =>
+    setExpandedCaps((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
   // PO acordado do cadastro (referencia; casa por NOME com o realizado).
   const [publishersCadastrados, setPublishersCadastrados] = useState<
     FechamentoPublisherCadastrado[]
@@ -347,11 +386,40 @@ export function CampanhaFechamentoModal({
         spend_final_input: "",
         moeda: "USD",
         p360_event_rate: null,
-        notes: ""
+        notes: "",
+        cap_tipo: null,
+        cap_unidade: null,
+        realizado_qty: null,
+        realizado_spend: null,
+        valido_qty: null,
+        excedente_qty: null,
+        spend_valido: null,
+        spend_excedente: null,
+        excedente_aprovado: false,
+        cap_breakdown: []
       }
     ]);
   const removePub = (idx: number) =>
     setPublishers((prev) => prev.filter((_, i) => i !== idx));
+
+  // Toggle "pagar excedente mesmo assim": reflete o spend_final na hora
+  // (cheio = realizado_spend; cortado = spend_valido). O backend recalcula
+  // de qualquer forma, mas a UI mostra o impacto imediato.
+  const toggleExcedente = (idx: number, aprovado: boolean) =>
+    setPublishers((prev) =>
+      prev.map((row, i) => {
+        if (i !== idx) return row;
+        const target = aprovado ? row.realizado_spend : row.spend_valido;
+        return {
+          ...row,
+          excedente_aprovado: aprovado,
+          spend_final_input:
+            target != null
+              ? blurFormatNumberPtBr(String(target), 2)
+              : row.spend_final_input
+        };
+      })
+    );
 
   // ----- Submit (upsert) -----
   const handleSave = async () => {
@@ -380,7 +448,9 @@ export function CampanhaFechamentoModal({
         spend_final: spend,
         moeda: p.moeda,
         p360_event_rate: p.p360_event_rate,
-        notes: p.notes.trim() || null
+        notes: p.notes.trim() || null,
+        // So envia a flag pra publishers com cap; backend recalcula spend_valido.
+        ...(hasCap(p) ? { excedente_aprovado: p.excedente_aprovado } : {})
       });
     }
 
@@ -729,11 +799,15 @@ export function CampanhaFechamentoModal({
                         </tr>
                       </thead>
                       <tbody>
-                        {publishers.map((p, idx) => (
+                        {publishers.map((p, idx) => {
+                          const capColSpan = readOnly ? 6 : 7;
+                          const showCap = hasCap(p);
+                          const expanded = expandedCaps.has(idx);
+                          return (
+                          <Fragment key={p.id || `new-${idx}`}>
                           <tr
-                            key={p.id || `new-${idx}`}
                             className={
-                              idx < publishers.length - 1
+                              !showCap && idx < publishers.length - 1
                                 ? "border-b border-border"
                                 : ""
                             }
@@ -826,7 +900,31 @@ export function CampanhaFechamentoModal({
                               </td>
                             )}
                           </tr>
-                        ))}
+                          {showCap && (
+                            <tr
+                              className={
+                                idx < publishers.length - 1
+                                  ? "border-b border-border"
+                                  : ""
+                              }
+                            >
+                              <td colSpan={capColSpan} className="px-3 pb-3 pt-0">
+                                <CapExcedenteBlock
+                                  row={p}
+                                  moeda={p.moeda}
+                                  expanded={expanded}
+                                  onToggleExpand={() => toggleCapExpanded(idx)}
+                                  onToggleAprovado={(v) =>
+                                    toggleExcedente(idx, v)
+                                  }
+                                  readOnly={readOnly}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
+                          );
+                        })}
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-border bg-background/40">
@@ -970,6 +1068,168 @@ function fmtDateTime(s: string | null | undefined): string {
   } catch {
     return s;
   }
+}
+
+// Quantidade inteira PT-BR (1.234) pra cap em eventos.
+function fmtQty(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(v);
+}
+
+// Formata realizado/valido/excedente conforme a unidade do cap.
+// US$: valor monetario na moeda do publisher; Eventos: quantidade.
+function fmtCapValue(
+  v: number | null | undefined,
+  unidade: CampanhaCapUnidade | null,
+  moeda: Moeda
+): string {
+  if (v == null) return "—";
+  return unidade === "usd" ? formatCurrency(v, moeda) : fmtQty(v);
+}
+
+function capTipoLabelPt(t: CampanhaCapTipo | null): string {
+  return t === "diario" ? "diario" : t === "mensal" ? "mensal" : "—";
+}
+
+/**
+ * Bloco de cap/excedente de um publisher no fechamento.
+ * Mostra Realizado / Valido / Excedente desconsiderado + breakdown expansivel
+ * + toggle "pagar excedente mesmo assim".
+ */
+function CapExcedenteBlock({
+  row,
+  moeda,
+  expanded,
+  onToggleExpand,
+  onToggleAprovado,
+  readOnly
+}: {
+  row: PublisherRow;
+  moeda: Moeda;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onToggleAprovado: (v: boolean) => void;
+  readOnly: boolean;
+}) {
+  const unidade = row.cap_unidade;
+  const realizadoQ = unidade === "usd" ? row.realizado_spend : row.realizado_qty;
+  const validoQ = unidade === "usd" ? row.spend_valido : row.valido_qty;
+  const excedenteQ = unidade === "usd" ? row.spend_excedente : row.excedente_qty;
+  const hasExcedente = (excedenteQ ?? 0) > 0.0001;
+  const breakdown = row.cap_breakdown || [];
+
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <span className="font-semibold uppercase tracking-wider text-amber-300">
+            Cap {capTipoLabelPt(row.cap_tipo)}
+          </span>
+          <span className="text-muted">
+            Realizado:{" "}
+            <span className="font-mono text-foreground">
+              {fmtCapValue(realizadoQ, unidade, moeda)}
+            </span>
+          </span>
+          <span className="text-muted">
+            Valido:{" "}
+            <span className="font-mono text-emerald-300">
+              {fmtCapValue(validoQ, unidade, moeda)}
+            </span>
+          </span>
+          <span className="text-muted">
+            Excedente desconsiderado:{" "}
+            <span
+              className={
+                hasExcedente
+                  ? "font-mono text-danger"
+                  : "font-mono text-foreground"
+              }
+            >
+              {fmtCapValue(excedenteQ, unidade, moeda)}
+            </span>
+          </span>
+        </div>
+        {breakdown.length > 0 && (
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
+          >
+            {expanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            Detalhe
+          </button>
+        )}
+      </div>
+
+      {expanded && breakdown.length > 0 && (
+        <div className="mt-2 overflow-x-auto rounded border border-border bg-background/40">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border text-muted">
+                <th className="px-2 py-1.5 text-left font-medium">Periodo</th>
+                <th className="px-2 py-1.5 text-right font-medium">Cap</th>
+                <th className="px-2 py-1.5 text-right font-medium">Dias</th>
+                <th className="px-2 py-1.5 text-right font-medium">Realizado</th>
+                <th className="px-2 py-1.5 text-right font-medium">Valido</th>
+                <th className="px-2 py-1.5 text-right font-medium">Excedente</th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdown.map((b, i) => (
+                <tr key={i} className="border-b border-border/60 last:border-0">
+                  <td className="px-2 py-1.5 text-foreground">
+                    {fmtDateShort(b.inicio)}
+                    {b.fim ? `–${fmtDateShort(b.fim)}` : ""}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-muted">
+                    {fmtCapValue(b.cap, unidade, moeda)}
+                    {row.cap_tipo === "diario" ? "/dia" : ""}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-muted">
+                    {b.dias != null ? b.dias : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-foreground">
+                    {fmtCapValue(b.realizado, unidade, moeda)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-emerald-300">
+                    {fmtCapValue(b.valido, unidade, moeda)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-danger">
+                    {fmtCapValue(b.excedente, unidade, moeda)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <label
+        className={`mt-2 inline-flex items-center gap-2 text-xs ${
+          readOnly ? "opacity-60" : "cursor-pointer"
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={row.excedente_aprovado}
+          disabled={readOnly || !hasExcedente}
+          onChange={(e) => onToggleAprovado(e.target.checked)}
+          className="h-3.5 w-3.5 accent-amber-500"
+        />
+        <span className="text-foreground">
+          Pagar excedente mesmo assim
+        </span>
+        {!hasExcedente && (
+          <span className="text-muted">(sem excedente neste mes)</span>
+        )}
+      </label>
+    </div>
+  );
 }
 
 /** Data curta PT-BR (ex: "06/jun") pro indicador de renegociacao. */

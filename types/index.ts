@@ -48,6 +48,43 @@ export interface CampanhaPublisherPayout {
   payout: number | null;
 }
 
+// ---- Cap de eventos por publisher ----
+
+/** Tipo de cap de entrega de um publisher: nenhum, mensal ou diario (nunca os dois). */
+export type CampanhaCapTipo = "nenhum" | "mensal" | "diario";
+
+/** Unidade do cap: eventos (quantidade) ou US$ (spend). */
+export type CampanhaCapUnidade = "eventos" | "usd";
+
+/**
+ * Cap de eventos VIGENTE de um publisher numa campanha.
+ * Cap diario corta dia-a-dia sem netting; mensal corta no acumulado do mes.
+ * Quando o user muda o valor numa campanha que ja tem cap vigente, envia
+ * `data_efetiva` -> backend fecha a vigencia atual e abre uma nova (historico).
+ */
+export interface CampanhaPublisherCap {
+  tipo: CampanhaCapTipo;
+  unidade: CampanhaCapUnidade;
+  valor: number | null;
+  vigencia_inicio: string | null; // ISO YYYY-MM-DD
+  vigencia_fim: string | null; // ISO YYYY-MM-DD (null = aberta)
+  /** So no PATCH: data efetiva da renegociacao do cap (default hoje). */
+  data_efetiva?: string | null;
+}
+
+/**
+ * Uma vigencia historica do cap de um publisher (read-only, vinda do backend).
+ * Lista ordenada por vigencia_inicio ASC.
+ */
+export interface CampanhaCapHistorico {
+  tipo: CampanhaCapTipo;
+  unidade: CampanhaCapUnidade;
+  valor: number | null;
+  vigencia_inicio: string | null;
+  vigencia_fim: string | null;
+  changed_at?: string | null;
+}
+
 /**
  * Renegociacao do payout de um publisher num evento (historico).
  * Lista vinda do backend ordenada por changed_at (mais antiga -> mais recente).
@@ -88,6 +125,10 @@ export interface CampanhaPublisher {
   // Historico de renegociacoes de payout por evento (mesmo shape do fechamento).
   // Ausente/vazio = nenhuma renegociacao. Ordenado por changed_at ASC.
   renegociacoes?: CampanhaPublisherRenegociacao[];
+  // Cap de eventos vigente (tipo nenhum/mensal/diario). Ausente = sem cap.
+  cap?: CampanhaPublisherCap | null;
+  // Serie de vigencias do cap (read-only). Ausente/[] = nunca houve cap.
+  caps_historico?: CampanhaCapHistorico[];
   ordem?: number;
 }
 
@@ -297,6 +338,36 @@ export interface FechamentoPublisher {
   // Moeda de PAGAMENTO desse publisher (repasse). Independente da moeda de
   // recebimento (campanha). Default 'USD'. Backend retorna sempre.
   moeda?: Moeda;
+
+  // ---- Cap de eventos (so quando o publisher tem cap cadastrado) ----
+  // Realizado = total que o publisher entregou no mes (qty + spend).
+  // Valido = o que passa pelo cap; Excedente = o que foi cortado.
+  realizado_qty?: number | null;
+  realizado_spend?: number | null;
+  cap_tipo?: CampanhaCapTipo | null; // 'mensal' | 'diario' | null/'nenhum'
+  cap_unidade?: CampanhaCapUnidade | null;
+  valido_qty?: number | null;
+  excedente_qty?: number | null;
+  spend_valido?: number | null;
+  spend_excedente?: number | null;
+  // Quando true, o user decidiu pagar o excedente (spend_final volta pro cheio).
+  excedente_aprovado?: boolean | null;
+  // Detalhamento por periodo de vigencia do cap (diario quebra em janelas).
+  cap_breakdown?: CapBreakdownPeriodo[];
+}
+
+/**
+ * Um periodo de vigencia do cap no calculo do fechamento.
+ * Para cap diario, cada janela agrega os dias com aquele cap.
+ */
+export interface CapBreakdownPeriodo {
+  inicio: string | null; // ISO YYYY-MM-DD
+  fim: string | null; // ISO YYYY-MM-DD
+  cap: number | null; // valor do cap no periodo (por dia se diario, total se mensal)
+  dias: number | null;
+  realizado: number | null;
+  valido: number | null;
+  excedente: number | null;
 }
 
 /**
@@ -353,6 +424,9 @@ export interface FechamentoUpsertPayload {
     notes?: string | null;
     // Moeda de pagamento do publisher. Default 'USD' se ausente (backend).
     moeda?: Moeda;
+    // Cap de eventos: quando true, paga o excedente mesmo assim (spend cheio).
+    // So enviado para publishers que tem cap. Backend recalcula o spend_valido.
+    excedente_aprovado?: boolean;
   }>;
 }
 
