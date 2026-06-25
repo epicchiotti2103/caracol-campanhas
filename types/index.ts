@@ -200,33 +200,30 @@ export interface Campanha {
   obs?: string | null;
 }
 
-// ---- Historico de pausa/reativacao da campanha (pause-log) ----
+// ---- Historico de pausa/reativacao da campanha (status-windows) ----
 // Cada pausa/reativacao da campanha inteira fica registrada num log; o backend
-// expoe as JANELAS de pausa do mes de referencia + os dias ativos.
-// Backend (slug `campanhas-pause-log`) e job do subagente `tracker`.
-// ⚠ CONTRATO PENDENTE DE CONFIRMACAO — shape provavel; ajustar quando o tracker
-// reportar em outbox/tracker.md sob slug `campanhas-pause-log`.
+// expoe as JANELAS de pausa do mes + os dias ativos via
+// GET /campanhas/{id}/status-windows?month=YYYY-MM (e tambem no fechamento, no
+// campo `status_windows`). Backend (slug `campanhas-pause-log`, subagente `tracker`).
 
 /**
- * Uma janela de pausa dentro do mes de referencia.
- * `inicio` = data efetiva da pausa; `fim` = data efetiva da reativacao
- * (null = ainda pausada / "ate agora"). `reason` = motivo da pausa.
+ * Uma janela de pausa dentro do mes. Janela e [inicio, fim): o dia da reativacao
+ * (fim) JA conta como ativo. `fim` = null => segue pausada no fim do mes.
+ * O endpoint NAO retorna motivo.
  */
 export interface CampanhaPauseWindow {
   inicio: string; // ISO YYYY-MM-DD (data efetiva da pausa)
-  fim: string | null; // ISO YYYY-MM-DD (data efetiva da reativacao) ou null se ainda pausada
-  reason?: string | null;
+  fim: string | null; // ISO YYYY-MM-DD (data da reativacao) ou null se segue pausada
 }
 
 /**
- * Resposta do endpoint de janelas de pausa do mes de referencia da campanha.
- * `dias_ativos`/`dias_no_mes` sao opcionais — exibidos quando o backend os retorna.
+ * Resposta de GET /campanhas/{id}/status-windows?month=YYYY-MM
+ * (e do campo `status_windows` no GET do fechamento).
  */
-export interface CampanhaPauseWindowsResponse {
-  mes_referencia?: string | null; // ISO YYYY-MM-01
-  windows: CampanhaPauseWindow[];
-  dias_ativos?: number | null;
-  dias_no_mes?: number | null;
+export interface CampanhaStatusWindowsResponse {
+  dias_ativos: number;
+  dias_no_mes: number;
+  pausas: CampanhaPauseWindow[];
 }
 
 // Papel de um user dentro de uma campanha (N:N via tabela campanhas_users).

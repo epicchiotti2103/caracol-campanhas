@@ -24,7 +24,7 @@ import { ReasonDateModal } from "@/components/reason-date-modal";
 import { DateOnlyModal } from "@/components/date-only-modal";
 import { Pause, Play } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { fetchPauseWindows } from "@/lib/pause-windows";
+import { fetchStatusWindows } from "@/lib/pause-windows";
 import { invalidateCache } from "@/lib/cache";
 import { useToast } from "@/lib/toast-context";
 import { useCan } from "@/lib/perms-context";
@@ -40,7 +40,7 @@ import type {
   CampanhaApp,
   CampanhaMediaSource,
   CampanhaPauseWindow,
-  CampanhaPauseWindowsResponse,
+  CampanhaStatusWindowsResponse,
   CampanhaPublisher,
   CampanhaPublisherRenegociacao,
   Moeda
@@ -71,8 +71,8 @@ function CampanhaDetail() {
   const [pausing, setPausing] = useState(false);
   const [unpauseOpen, setUnpauseOpen] = useState(false);
   const [unpausing, setUnpausing] = useState(false);
-  const [pauseWindows, setPauseWindows] =
-    useState<CampanhaPauseWindowsResponse | null>(null);
+  const [statusWindows, setStatusWindows] =
+    useState<CampanhaStatusWindowsResponse | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -85,9 +85,9 @@ function CampanhaDetail() {
       try {
         const res: Campanha = await apiFetch(`/campanhas/${id}`);
         if (!cancelled) setCampanha(res);
-        // Janelas de pausa do mes (pause-log). Tolerante a backend ausente.
-        const pw = await fetchPauseWindows(id);
-        if (!cancelled) setPauseWindows(pw);
+        // Janelas de pausa do mes (status-windows). Tolerante a backend ausente.
+        const sw = await fetchStatusWindows(id, res.mes_referencia);
+        if (!cancelled) setStatusWindows(sw);
       } catch (err: any) {
         if (!cancelled) setError(err?.message || "Falha ao carregar campanha.");
       } finally {
@@ -106,8 +106,8 @@ function CampanhaDetail() {
       const res: Campanha = await apiFetch(`/campanhas/${id}`);
       setCampanha(res);
       // Recarrega tambem as janelas de pausa (pausar/reativar muda o log).
-      const pw = await fetchPauseWindows(id);
-      setPauseWindows(pw);
+      const sw = await fetchStatusWindows(id, res.mes_referencia);
+      setStatusWindows(sw);
     } catch (err: any) {
       toast.error(err?.message || "Falha ao recarregar campanha.");
     }
@@ -359,7 +359,7 @@ function CampanhaDetail() {
           ) : (
             <CampanhaView
               campanha={campanha}
-              pauseWindows={pauseWindows}
+              statusWindows={statusWindows}
               onReload={reloadCampanha}
             />
           )}
@@ -491,15 +491,15 @@ function DeleteModal({
 
 function CampanhaView({
   campanha,
-  pauseWindows,
+  statusWindows,
   onReload
 }: {
   campanha: Campanha;
-  pauseWindows: CampanhaPauseWindowsResponse | null;
+  statusWindows: CampanhaStatusWindowsResponse | null;
   onReload: () => Promise<void> | void;
 }) {
-  const windows = pauseWindows?.windows ?? [];
-  const hasPauseHistory = windows.length > 0;
+  const pausas = statusWindows?.pausas ?? [];
+  const hasPauseHistory = pausas.length > 0;
   return (
     <div className="space-y-6">
       {/* Identificacao / status no topo */}
@@ -552,7 +552,7 @@ function CampanhaView({
 
       {hasPauseHistory && (
         <Section title="Historico de pausa (mes de referencia)">
-          <PauseWindowsView data={pauseWindows} />
+          <PauseWindowsView data={statusWindows} />
         </Section>
       )}
 
@@ -701,42 +701,33 @@ function Field({
 }
 
 /**
- * Lista as janelas de pausa do mes de referencia (feature pause-log).
- * Cada janela: "Pausada de DD/MM ate DD/MM" (ou "ate agora" se ainda pausada).
- * Mostra "X de Y dias ativos no mes" quando o backend retorna esses campos.
- * ⚠ Contrato pendente de confirmacao com o tracker (slug `campanhas-pause-log`).
+ * Lista as janelas de pausa do mes (status-windows).
+ * Cada janela [inicio, fim): "Pausada de DD/MM ate DD/MM" (o dia da reativacao
+ * ja conta como ativo); "ate o fim do mes" quando fim=null (segue pausada).
+ * Cabecalho "X de Y dias ativos no mes". O endpoint nao traz motivo.
  */
 function PauseWindowsView({
   data
 }: {
-  data: CampanhaPauseWindowsResponse | null;
+  data: CampanhaStatusWindowsResponse | null;
 }) {
-  const windows = data?.windows ?? [];
-  if (windows.length === 0) {
+  const pausas = data?.pausas ?? [];
+  if (pausas.length === 0) {
     return <p className="text-sm text-muted">Sem pausas no mes.</p>;
   }
   const diasAtivos = data?.dias_ativos;
   const diasNoMes = data?.dias_no_mes;
-  const showDiasAtivos =
-    diasAtivos != null && diasAtivos !== undefined;
+  const showDiasAtivos = diasAtivos != null && diasNoMes != null;
   return (
     <div className="space-y-3">
       {showDiasAtivos && (
         <p className="text-sm text-foreground">
-          <span className="font-semibold">{diasAtivos}</span>
-          {diasNoMes != null ? (
-            <>
-              {" "}
-              de <span className="font-semibold">{diasNoMes}</span> dias ativos
-              no mes
-            </>
-          ) : (
-            " dias ativos no mes"
-          )}
+          <span className="font-semibold">{diasAtivos}</span> de{" "}
+          <span className="font-semibold">{diasNoMes}</span> dias ativos no mes
         </p>
       )}
       <ul className="space-y-2">
-        {windows.map((w: CampanhaPauseWindow, i: number) => (
+        {pausas.map((w: CampanhaPauseWindow, i: number) => (
           <li
             key={`${w.inicio}-${w.fim ?? "open"}-${i}`}
             className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm"
@@ -748,12 +739,9 @@ function PauseWindowsView({
               {w.fim ? (
                 <span className="font-medium">{fmtDate(w.fim)}</span>
               ) : (
-                <span className="font-medium text-danger">agora</span>
+                <span className="font-medium text-danger">o fim do mes</span>
               )}
             </span>
-            {w.reason && (
-              <span className="text-xs text-muted">— {w.reason}</span>
-            )}
           </li>
         ))}
       </ul>
