@@ -200,6 +200,35 @@ export interface Campanha {
   obs?: string | null;
 }
 
+// ---- Historico de pausa/reativacao da campanha (pause-log) ----
+// Cada pausa/reativacao da campanha inteira fica registrada num log; o backend
+// expoe as JANELAS de pausa do mes de referencia + os dias ativos.
+// Backend (slug `campanhas-pause-log`) e job do subagente `tracker`.
+// ⚠ CONTRATO PENDENTE DE CONFIRMACAO — shape provavel; ajustar quando o tracker
+// reportar em outbox/tracker.md sob slug `campanhas-pause-log`.
+
+/**
+ * Uma janela de pausa dentro do mes de referencia.
+ * `inicio` = data efetiva da pausa; `fim` = data efetiva da reativacao
+ * (null = ainda pausada / "ate agora"). `reason` = motivo da pausa.
+ */
+export interface CampanhaPauseWindow {
+  inicio: string; // ISO YYYY-MM-DD (data efetiva da pausa)
+  fim: string | null; // ISO YYYY-MM-DD (data efetiva da reativacao) ou null se ainda pausada
+  reason?: string | null;
+}
+
+/**
+ * Resposta do endpoint de janelas de pausa do mes de referencia da campanha.
+ * `dias_ativos`/`dias_no_mes` sao opcionais — exibidos quando o backend os retorna.
+ */
+export interface CampanhaPauseWindowsResponse {
+  mes_referencia?: string | null; // ISO YYYY-MM-01
+  windows: CampanhaPauseWindow[];
+  dias_ativos?: number | null;
+  dias_no_mes?: number | null;
+}
+
 // Papel de um user dentro de uma campanha (N:N via tabela campanhas_users).
 export type CampanhaUserRole = "gestor";
 

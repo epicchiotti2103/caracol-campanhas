@@ -21,8 +21,10 @@ import { StatusBadge } from "@/components/status-badge";
 import { CampanhaForm } from "@/components/campanha-form";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
 import { ReasonDateModal } from "@/components/reason-date-modal";
+import { DateOnlyModal } from "@/components/date-only-modal";
 import { Pause, Play } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { fetchPauseWindows } from "@/lib/pause-windows";
 import { invalidateCache } from "@/lib/cache";
 import { useToast } from "@/lib/toast-context";
 import { useCan } from "@/lib/perms-context";
@@ -37,6 +39,8 @@ import type {
   Campanha,
   CampanhaApp,
   CampanhaMediaSource,
+  CampanhaPauseWindow,
+  CampanhaPauseWindowsResponse,
   CampanhaPublisher,
   CampanhaPublisherRenegociacao,
   Moeda
@@ -65,7 +69,10 @@ function CampanhaDetail() {
   const [duplicating, setDuplicating] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
+  const [unpauseOpen, setUnpauseOpen] = useState(false);
   const [unpausing, setUnpausing] = useState(false);
+  const [pauseWindows, setPauseWindows] =
+    useState<CampanhaPauseWindowsResponse | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -78,6 +85,9 @@ function CampanhaDetail() {
       try {
         const res: Campanha = await apiFetch(`/campanhas/${id}`);
         if (!cancelled) setCampanha(res);
+        // Janelas de pausa do mes (pause-log). Tolerante a backend ausente.
+        const pw = await fetchPauseWindows(id);
+        if (!cancelled) setPauseWindows(pw);
       } catch (err: any) {
         if (!cancelled) setError(err?.message || "Falha ao carregar campanha.");
       } finally {
@@ -95,6 +105,9 @@ function CampanhaDetail() {
     try {
       const res: Campanha = await apiFetch(`/campanhas/${id}`);
       setCampanha(res);
+      // Recarrega tambem as janelas de pausa (pausar/reativar muda o log).
+      const pw = await fetchPauseWindows(id);
+      setPauseWindows(pw);
     } catch (err: any) {
       toast.error(err?.message || "Falha ao recarregar campanha.");
     }
@@ -161,12 +174,16 @@ function CampanhaDetail() {
     }
   };
 
-  const handleUnpause = async () => {
+  const handleUnpause = async (effectiveAt: string) => {
     if (!campanha) return;
     setUnpausing(true);
     try {
-      await apiFetch(`/campanhas/${campanha.id}/unpause`, { method: "POST" });
+      await apiFetch(`/campanhas/${campanha.id}/unpause`, {
+        method: "POST",
+        body: JSON.stringify({ effective_at: effectiveAt })
+      });
       toast.success("Campanha reativada.");
+      setUnpauseOpen(false);
       await reloadCampanha();
     } catch (err: any) {
       toast.error(err?.message || "Falha ao reativar campanha.");
@@ -234,7 +251,7 @@ function CampanhaDetail() {
                 (campanha.status === "pausada" ? (
                   <button
                     type="button"
-                    onClick={handleUnpause}
+                    onClick={() => setUnpauseOpen(true)}
                     disabled={unpausing}
                     className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
                   >
@@ -340,7 +357,11 @@ function CampanhaDetail() {
               }}
             />
           ) : (
-            <CampanhaView campanha={campanha} onReload={reloadCampanha} />
+            <CampanhaView
+              campanha={campanha}
+              pauseWindows={pauseWindows}
+              onReload={reloadCampanha}
+            />
           )}
 
           {pauseOpen && (
@@ -360,6 +381,27 @@ function CampanhaDetail() {
               submitting={pausing}
               onConfirm={handlePause}
               onCancel={() => setPauseOpen(false)}
+            />
+          )}
+
+          {unpauseOpen && (
+            <DateOnlyModal
+              title="Reativar campanha"
+              description={
+                <>
+                  Reativar a campanha{" "}
+                  <span className="font-medium text-foreground">
+                    {campanha.name}
+                  </span>
+                  . Informe a data efetiva da reativacao.
+                </>
+              }
+              dateLabel="Data da reativacao"
+              confirmLabel="Reativar campanha"
+              confirmVariant="primary"
+              submitting={unpausing}
+              onConfirm={handleUnpause}
+              onCancel={() => setUnpauseOpen(false)}
             />
           )}
 
@@ -449,11 +491,15 @@ function DeleteModal({
 
 function CampanhaView({
   campanha,
+  pauseWindows,
   onReload
 }: {
   campanha: Campanha;
+  pauseWindows: CampanhaPauseWindowsResponse | null;
   onReload: () => Promise<void> | void;
 }) {
+  const windows = pauseWindows?.windows ?? [];
+  const hasPauseHistory = windows.length > 0;
   return (
     <div className="space-y-6">
       {/* Identificacao / status no topo */}
@@ -503,6 +549,12 @@ function CampanhaView({
           </Field>
         </div>
       </Section>
+
+      {hasPauseHistory && (
+        <Section title="Historico de pausa (mes de referencia)">
+          <PauseWindowsView data={pauseWindows} />
+        </Section>
+      )}
 
       <Section title="Eventos pagos">
         <EventosTable
@@ -644,6 +696,67 @@ function Field({
         {label}
       </p>
       {children}
+    </div>
+  );
+}
+
+/**
+ * Lista as janelas de pausa do mes de referencia (feature pause-log).
+ * Cada janela: "Pausada de DD/MM ate DD/MM" (ou "ate agora" se ainda pausada).
+ * Mostra "X de Y dias ativos no mes" quando o backend retorna esses campos.
+ * ⚠ Contrato pendente de confirmacao com o tracker (slug `campanhas-pause-log`).
+ */
+function PauseWindowsView({
+  data
+}: {
+  data: CampanhaPauseWindowsResponse | null;
+}) {
+  const windows = data?.windows ?? [];
+  if (windows.length === 0) {
+    return <p className="text-sm text-muted">Sem pausas no mes.</p>;
+  }
+  const diasAtivos = data?.dias_ativos;
+  const diasNoMes = data?.dias_no_mes;
+  const showDiasAtivos =
+    diasAtivos != null && diasAtivos !== undefined;
+  return (
+    <div className="space-y-3">
+      {showDiasAtivos && (
+        <p className="text-sm text-foreground">
+          <span className="font-semibold">{diasAtivos}</span>
+          {diasNoMes != null ? (
+            <>
+              {" "}
+              de <span className="font-semibold">{diasNoMes}</span> dias ativos
+              no mes
+            </>
+          ) : (
+            " dias ativos no mes"
+          )}
+        </p>
+      )}
+      <ul className="space-y-2">
+        {windows.map((w: CampanhaPauseWindow, i: number) => (
+          <li
+            key={`${w.inicio}-${w.fim ?? "open"}-${i}`}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm"
+          >
+            <Pause className="h-3.5 w-3.5 flex-shrink-0 text-danger" />
+            <span className="text-foreground">
+              Pausada de{" "}
+              <span className="font-medium">{fmtDate(w.inicio)}</span> ate{" "}
+              {w.fim ? (
+                <span className="font-medium">{fmtDate(w.fim)}</span>
+              ) : (
+                <span className="font-medium text-danger">agora</span>
+              )}
+            </span>
+            {w.reason && (
+              <span className="text-xs text-muted">— {w.reason}</span>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
