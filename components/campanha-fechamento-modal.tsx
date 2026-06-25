@@ -80,6 +80,13 @@ interface PublisherRow {
   spend_excedente: number | null;
   excedente_aprovado: boolean;
   cap_breakdown: CapBreakdownPeriodo[];
+
+  // ---- Exclusao por pausa (read-only; backend ja desconta o spend_final) ----
+  // realizado_qty (acima, do cap) ja e o LIQUIDO usado no pagamento.
+  pausa_aplicada: boolean;
+  realizado_qty_bruto: number | null; // bruto (antes de excluir dias pausados)
+  qty_excluida_pausa: number | null;
+  spend_excluida_pausa: number | null;
 }
 
 function hasCap(p: PublisherRow): boolean {
@@ -108,7 +115,11 @@ function toRow(p: FechamentoPublisher, moeda: string | null | undefined): Publis
     spend_valido: p.spend_valido ?? null,
     spend_excedente: p.spend_excedente ?? null,
     excedente_aprovado: p.excedente_aprovado === true,
-    cap_breakdown: Array.isArray(p.cap_breakdown) ? p.cap_breakdown : []
+    cap_breakdown: Array.isArray(p.cap_breakdown) ? p.cap_breakdown : [],
+    pausa_aplicada: p.pausa_aplicada === true,
+    realizado_qty_bruto: p.realizado_qty_bruto ?? null,
+    qty_excluida_pausa: p.qty_excluida_pausa ?? null,
+    spend_excluida_pausa: p.spend_excluida_pausa ?? null
   };
 }
 
@@ -228,6 +239,11 @@ export function CampanhaFechamentoModal({
   const isLocked = fechamento?.is_locked || fechamento?.locked || false;
   const isStub = !fechamento?.id;
   const readOnly = isLocked;
+
+  // Houve pausa no mes? (status_windows.pausas nao vazio). Usado pra avisar
+  // quando a exclusao por pausa NAO foi aplicada a um publisher sem base diaria.
+  const houvePausaNoMes =
+    (fechamento?.status_windows?.pausas?.length ?? 0) > 0;
 
   const spendFinalNumber = useMemo(() => {
     const n = parseNumberPtBr(spendFinalInput);
@@ -396,7 +412,11 @@ export function CampanhaFechamentoModal({
         spend_valido: null,
         spend_excedente: null,
         excedente_aprovado: false,
-        cap_breakdown: []
+        cap_breakdown: [],
+        pausa_aplicada: false,
+        realizado_qty_bruto: null,
+        qty_excluida_pausa: null,
+        spend_excluida_pausa: null
       }
     ]);
   const removePub = (idx: number) =>
@@ -830,6 +850,11 @@ export function CampanhaFechamentoModal({
                                   p.publisher_name.trim().toLowerCase()
                                 )}
                               />
+                              <PausaExclusaoInfo
+                                row={p}
+                                houvePausaNoMes={houvePausaNoMes}
+                                moeda={p.moeda}
+                              />
                             </td>
                             <td className="px-3 py-2 text-left text-xs text-muted">
                               {renderPoAcordado(p.publisher_name)}
@@ -1260,6 +1285,61 @@ function fmtDate(s: string | null | undefined): string {
   } catch {
     return s;
   }
+}
+
+/**
+ * Info da exclusao por pausa de um publisher no fechamento.
+ * - Quando `pausa_aplicada && qty_excluida_pausa > 0`: badge "X conversoes
+ *   excluidas por pausa" (+ bruto -> liquido + spend equivalente).
+ * - Quando houve pausa no mes mas `pausa_aplicada === false`: warning sutil
+ *   ("sem granularidade diaria — exclusao nao aplicada"), pra nao achar que
+ *   descontou quando nao descontou.
+ */
+function PausaExclusaoInfo({
+  row,
+  houvePausaNoMes,
+  moeda
+}: {
+  row: PublisherRow;
+  houvePausaNoMes: boolean;
+  moeda: Moeda;
+}) {
+  const excluida = row.qty_excluida_pausa ?? 0;
+
+  if (row.pausa_aplicada && excluida > 0) {
+    const bruto = row.realizado_qty_bruto;
+    const liquido = row.realizado_qty;
+    const spendExcl = row.spend_excluida_pausa;
+    return (
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-tight">
+        <span className="rounded bg-danger/10 px-1.5 py-0.5 font-semibold text-danger">
+          {fmtQty(excluida)} conversoes excluidas por pausa
+        </span>
+        {bruto != null && liquido != null && (
+          <span className="font-mono text-muted">
+            {fmtQty(bruto)} → {fmtQty(liquido)}
+          </span>
+        )}
+        {spendExcl != null && spendExcl > 0 && (
+          <span className="text-muted">
+            (−{formatCurrency(spendExcl, moeda)})
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // Pausa no mes mas o publisher nao tem base diaria pra excluir -> avisa.
+  if (houvePausaNoMes && row.pausa_aplicada === false) {
+    return (
+      <div className="mt-1.5 flex items-center gap-1 text-[11px] leading-tight text-amber-300/90">
+        <AlertCircle className="h-3 w-3 flex-shrink-0" />
+        <span>sem granularidade diaria — exclusao nao aplicada</span>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 /** Destaca as media sources INATIVAS de um publisher cadastrado no fechamento. */

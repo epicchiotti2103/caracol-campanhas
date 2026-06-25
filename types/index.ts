@@ -380,6 +380,17 @@ export interface FechamentoPublisher {
   excedente_aprovado?: boolean | null;
   // Detalhamento por periodo de vigencia do cap (diario quebra em janelas).
   cap_breakdown?: CapBreakdownPeriodo[];
+
+  // ---- Exclusao por pausa da campanha (status-windows aplicado no fechamento) ----
+  // O backend desconta as conversoes que cairam em dias pausados. Os campos
+  // spend_final/spend_real/installs_or_conversions ja vem LIQUIDOS (descontados).
+  // `pausa_aplicada` = false quando o publisher nao tem base diaria pra excluir
+  // (pagou MTD cheio) — nesse caso o aviso "exclusao nao aplicada" aparece se
+  // houve pausa no mes.
+  pausa_aplicada?: boolean | null;
+  realizado_qty_bruto?: number | null; // conversoes ANTES de excluir dias pausados
+  qty_excluida_pausa?: number | null; // conversoes descartadas pela pausa
+  spend_excluida_pausa?: number | null; // spend equivalente descartado
 }
 
 /**
@@ -434,6 +445,9 @@ export interface Fechamento {
   paused_at?: string | null;
   paused_registered_at?: string | null;
   paused_reason?: string | null;
+  // Janelas de pausa do mes (mesmo objeto do GET /status-windows). Usado pra
+  // saber se houve pausa no mes e avisar quando a exclusao nao foi aplicada.
+  status_windows?: CampanhaStatusWindowsResponse | null;
 }
 
 /** Body do POST /campanhas/{id}/fechamento?month=YYYY-MM. */
