@@ -791,6 +791,12 @@ export function CampanhaFechamentoModal({
                             Publisher
                           </th>
                           <th
+                            className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
+                            title="Quantidade de eventos faturavel (o que voce multiplica pelo PO). Com cap, mostra a quantidade valida pos-cap (marcada com *)."
+                          >
+                            Eventos
+                          </th>
+                          <th
                             className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted"
                             title="PO (payout) acordado no cadastro da campanha, por evento. Referencia."
                           >
@@ -820,7 +826,7 @@ export function CampanhaFechamentoModal({
                       </thead>
                       <tbody>
                         {publishers.map((p, idx) => {
-                          const capColSpan = readOnly ? 6 : 7;
+                          const capColSpan = readOnly ? 7 : 8;
                           const showCap = hasCap(p);
                           const expanded = expandedCaps.has(idx);
                           return (
@@ -843,6 +849,7 @@ export function CampanhaFechamentoModal({
                                 }
                                 disabled={readOnly}
                                 placeholder="Ex: googleadwords_int"
+                                tabIndex={-1}
                                 className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                               />
                               <InactiveMediaSources
@@ -855,6 +862,26 @@ export function CampanhaFechamentoModal({
                                 houvePausaNoMes={houvePausaNoMes}
                                 moeda={p.moeda}
                               />
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-xs text-foreground">
+                              {(() => {
+                                const ev = eventosFaturavel(p);
+                                if (ev == null)
+                                  return <span className="text-muted">—</span>;
+                                return (
+                                  <span className="inline-flex items-center justify-end gap-0.5">
+                                    {fmtQty(ev)}
+                                    {capCortou(p) && (
+                                      <span
+                                        className="text-amber-300"
+                                        title="limite de budget (cap) aplicado — quantidade pos-cap"
+                                      >
+                                        *
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="px-3 py-2 text-left text-xs text-muted">
                               {renderPoAcordado(p.publisher_name)}
@@ -901,6 +928,7 @@ export function CampanhaFechamentoModal({
                                 }
                                 disabled={readOnly}
                                 aria-label="Moeda de pagamento do publisher"
+                                tabIndex={-1}
                                 className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                               >
                                 <option value="USD">USD</option>
@@ -919,6 +947,7 @@ export function CampanhaFechamentoModal({
                                   onClick={() => removePub(idx)}
                                   className="text-muted transition-colors hover:text-danger"
                                   aria-label="Remover publisher"
+                                  tabIndex={-1}
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
@@ -955,7 +984,7 @@ export function CampanhaFechamentoModal({
                         <tr className="border-t border-border bg-background/40">
                           <td
                             className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
-                            colSpan={3}
+                            colSpan={4}
                           >
                             Soma (pagamentos)
                           </td>
@@ -1099,6 +1128,24 @@ function fmtDateTime(s: string | null | undefined): string {
 function fmtQty(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(v);
+}
+
+// Quantidade de eventos faturavel por publisher (o numero que o user multiplica
+// pelo PO na planilha). Com cap: a quantidade VALIDA pos-cap (o que de fato
+// bilha). Sem cap: o realizado liquido (ja pos-pausa).
+function eventosFaturavel(p: PublisherRow): number | null {
+  if (hasCap(p)) return p.valido_qty;
+  return p.realizado_qty;
+}
+
+// Cap efetivamente cortou eventos? (valido < realizado) — pra marcar a coluna.
+function capCortou(p: PublisherRow): boolean {
+  return (
+    hasCap(p) &&
+    p.realizado_qty != null &&
+    p.valido_qty != null &&
+    p.valido_qty < p.realizado_qty
+  );
 }
 
 // Formata realizado/valido/excedente conforme a unidade do cap.
