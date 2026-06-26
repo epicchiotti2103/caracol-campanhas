@@ -123,6 +123,17 @@ function toRow(p: FechamentoPublisher, moeda: string | null | undefined): Publis
   };
 }
 
+// Ordena os publishers em ordem alfabetica (case-insensitive, locale pt-BR).
+// Importante ordenar o ARRAY DO STATE (nao so na render) pra que o index do
+// .map() bata com o index do state — updatePub(idx, ...) depende disso.
+function sortRows(rows: PublisherRow[]): PublisherRow[] {
+  return [...rows].sort((a, b) =>
+    a.publisher_name.localeCompare(b.publisher_name, "pt-BR", {
+      sensitivity: "base"
+    })
+  );
+}
+
 export function CampanhaFechamentoModal({
   campanhaId,
   campanhaNome,
@@ -190,7 +201,9 @@ export function CampanhaFechamentoModal({
       );
       setSpendRealRaw(sumReal > 0 ? sumReal : null);
       setNotes(f.notes || "");
-      setPublishers((f.publishers || []).map((p) => toRow(p, f.moeda || moeda)));
+      setPublishers(
+        sortRows((f.publishers || []).map((p) => toRow(p, f.moeda || moeda)))
+      );
       setPublishersCadastrados(f.publishers_cadastrados || []);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar fechamento.");
@@ -553,7 +566,9 @@ export function CampanhaFechamentoModal({
       );
       setNotes(saved.notes || "");
       setPublishers(
-        (saved.publishers || []).map((p) => toRow(p, saved.moeda || moeda))
+        sortRows(
+          (saved.publishers || []).map((p) => toRow(p, saved.moeda || moeda))
+        )
       );
       setPublishersCadastrados(saved.publishers_cadastrados || []);
       onSaved?.(saved);
