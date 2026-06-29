@@ -807,9 +807,9 @@ export function CampanhaFechamentoModal({
                           </th>
                           <th
                             className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted"
-                            title="Quantidade de eventos faturavel (o que voce multiplica pelo PO). Com cap, mostra a quantidade valida pos-cap (marcada com *)."
+                            title="Quantidade de eventos pagos faturavel (o que voce multiplica pelo PO). Com cap, mostra a quantidade valida pos-cap (marcada com *)."
                           >
-                            Eventos
+                            Eventos pagos
                           </th>
                           <th
                             className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted"
