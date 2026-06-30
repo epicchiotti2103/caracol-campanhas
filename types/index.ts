@@ -27,6 +27,10 @@ export interface CampanhaEvento {
   nome: string;
   target_cpa?: number | null;
   budget_monthly?: number | null;
+  // Cap de eventos VIGENTE deste evento (tipo nenhum/mensal/diario). Ausente = sem cap.
+  cap?: CampanhaEventoCap | null;
+  // Serie de vigencias do cap do evento (read-only). Ausente/[] = nunca houve cap.
+  caps_historico?: CampanhaCapHistorico[];
   ordem?: number;
 }
 
@@ -70,6 +74,22 @@ export interface CampanhaPublisherCap {
   vigencia_fim: string | null; // ISO YYYY-MM-DD (null = aberta)
   /** So no PATCH: data efetiva da renegociacao do cap (default hoje). */
   data_efetiva?: string | null;
+}
+
+/**
+ * Cap de eventos VIGENTE de um EVENTO da campanha (analogo ao cap de publisher).
+ * Shape aceito pelo backend (EventoCapInput): tipo, unidade, valor,
+ * vigencia_inicio + `reason` (motivo da renegociacao, so no PATCH). Diferente do
+ * cap de publisher, o cap de evento NAO tem vigencia_fim na entrada (a vigencia
+ * e fechada pela renegociacao seguinte) e usa `reason` no lugar de `data_efetiva`.
+ */
+export interface CampanhaEventoCap {
+  tipo: CampanhaCapTipo;
+  unidade: CampanhaCapUnidade;
+  valor: number | null;
+  vigencia_inicio: string | null; // ISO YYYY-MM-DD (data efetiva da vigencia)
+  /** So no PATCH: motivo da renegociacao do cap (vira nova vigencia). */
+  reason?: string | null;
 }
 
 /**

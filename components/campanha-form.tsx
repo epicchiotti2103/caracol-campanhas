@@ -33,6 +33,7 @@ import type {
   CampanhaCapTipo,
   CampanhaCapUnidade,
   CampanhaEvento,
+  CampanhaEventoCap,
   CampanhaMMP,
   CampanhaPublisher,
   CampanhaPublisherCap,
@@ -91,6 +92,9 @@ interface EventoRow {
   nome: string;
   target_cpa: string;
   budget_monthly: string;
+  // Cap deste evento (mesmo CapRow do publisher; evento nao usa vigencia_fim).
+  cap: CapRow;
+  caps_historico: CampanhaCapHistorico[]; // read-only, vinda do backend
 }
 
 interface AppRow {
@@ -162,7 +166,17 @@ function emptyCapRow(): CapRow {
   };
 }
 
-function capToRow(cap: CampanhaPublisherCap | null | undefined): CapRow {
+// Shape minimo de cap aceito por capToRow (publisher OU evento). O cap de evento
+// nao tem vigencia_fim — por isso o campo e opcional aqui.
+type CapLike = {
+  tipo: CampanhaCapTipo;
+  unidade?: CampanhaCapUnidade;
+  valor?: number | null;
+  vigencia_inicio?: string | null;
+  vigencia_fim?: string | null;
+};
+
+function capToRow(cap: CapLike | null | undefined): CapRow {
   if (!cap || cap.tipo === "nenhum" || !cap.tipo) return emptyCapRow();
   return {
     tipo: cap.tipo,
@@ -207,7 +221,19 @@ function eventoToRow(e: CampanhaEvento): EventoRow {
     nome: e.nome ?? "",
     target_cpa: e.target_cpa != null ? formatNumberPtBr(e.target_cpa) : "",
     budget_monthly:
-      e.budget_monthly != null ? formatNumberPtBr(e.budget_monthly) : ""
+      e.budget_monthly != null ? formatNumberPtBr(e.budget_monthly) : "",
+    cap: capToRow(e.cap),
+    caps_historico: Array.isArray(e.caps_historico) ? e.caps_historico : []
+  };
+}
+
+function emptyEventoRow(): EventoRow {
+  return {
+    nome: "",
+    target_cpa: "",
+    budget_monthly: "",
+    cap: emptyCapRow(),
+    caps_historico: []
   };
 }
 
@@ -331,7 +357,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
   const [eventos, setEventos] = useState<EventoRow[]>(
     initial?.eventos_pagos && initial.eventos_pagos.length > 0
       ? initial.eventos_pagos.map(eventoToRow)
-      : [{ nome: "", target_cpa: "", budget_monthly: "" }]
+      : [emptyEventoRow()]
   );
 
   // Apps (api_af) — comeca vazio (nao obrigatorio)
@@ -408,22 +434,43 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capEffectiveDate, pendingSubmit]);
 
+  // Cap de EVENTO renegociado: ao mudar tipo/unidade/valor de um cap de evento
+  // ja vigente, abrimos um modal pedindo o MOTIVO da renegociacao (o backend usa
+  // a vigencia_inicio do form como data efetiva e fecha a vigencia anterior).
+  const [eventoCapReason, setEventoCapReason] = useState<string>("");
+  const [pendingEventoCapSubmit, setPendingEventoCapSubmit] = useState(false);
+  const [eventoCapRenegEventos, setEventoCapRenegEventos] = useState<string[]>(
+    []
+  );
+
+  // Quando o motivo do cap de evento e confirmado no modal, retoma o submit.
+  useEffect(() => {
+    if (pendingEventoCapSubmit && eventoCapReason) {
+      setPendingEventoCapSubmit(false);
+      void handleSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoCapReason, pendingEventoCapSubmit]);
+
   // ---- helpers eventos ----
   const updateEvento = (idx: number, patch: Partial<EventoRow>) => {
     setEventos((prev) =>
       prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
     );
   };
-  const addEvento = () =>
-    setEventos((prev) => [
-      ...prev,
-      { nome: "", target_cpa: "", budget_monthly: "" }
-    ]);
+  const addEvento = () => setEventos((prev) => [...prev, emptyEventoRow()]);
   const removeEvento = (idx: number) => {
     setEventos((prev) =>
       prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
     );
   };
+  // cap de eventos dentro de um evento (mesmo padrao do cap de publisher)
+  const updateEventoCap = (idx: number, patch: Partial<CapRow>) =>
+    setEventos((prev) =>
+      prev.map((row, i) =>
+        i === idx ? { ...row, cap: { ...row.cap, ...patch } } : row
+      )
+    );
 
   // Nomes de eventos atuais (nao vazios, unicos por trim) — base pra reconciliar
   // os payouts dos publishers quando o user muda os eventos.
@@ -638,6 +685,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
 
     // Eventos
     const cleanEventos: CampanhaEvento[] = [];
+    // Eventos cujo cap MUDOU de valor/tipo/unidade numa campanha que ja tinha cap
+    // vigente -> precisam de motivo (renegociacao). Coletamos pra pedir no modal.
+    const eventoCapsRenegociados: string[] = [];
     for (const row of eventos) {
       const nomeTrim = row.nome.trim();
       if (!nomeTrim) continue;
@@ -672,10 +722,56 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         budgetMonthly = parsed;
       }
 
+      // ---- Cap deste evento (mesmo padrao do cap de publisher) ----
+      const evCapRow = row.cap;
+      let evCapPayload: CampanhaEventoCap;
+      if (evCapRow.tipo === "nenhum") {
+        evCapPayload = {
+          tipo: "nenhum",
+          unidade: "eventos",
+          valor: null,
+          vigencia_inicio: null
+        };
+      } else {
+        const rawValor = evCapRow.valor.trim();
+        const valorNum = rawValor ? parseNumberPtBr(rawValor) : NaN;
+        if (!rawValor || Number.isNaN(valorNum) || valorNum < 0) {
+          setError(
+            `Evento "${nomeTrim}": informe um valor de cap valido (ou tipo Nenhum).`
+          );
+          return;
+        }
+        if (!evCapRow.vigencia_inicio) {
+          setError(
+            `Evento "${nomeTrim}": informe a data de inicio da vigencia do cap.`
+          );
+          return;
+        }
+        evCapPayload = {
+          tipo: evCapRow.tipo,
+          unidade: evCapRow.unidade,
+          valor: valorNum,
+          vigencia_inicio: evCapRow.vigencia_inicio
+        };
+        // Renegociacao: ja existia cap vigente (initial) e tipo/unidade/valor
+        // mudou -> precisa de motivo. Mudanca de vigencia pura nao conta.
+        const prev = evCapRow.initial;
+        const changedMaterial =
+          prev != null &&
+          (prev.tipo !== evCapPayload.tipo ||
+            prev.unidade !== evCapPayload.unidade ||
+            (prev.valor ?? null) !== (evCapPayload.valor ?? null));
+        if (changedMaterial) {
+          eventoCapsRenegociados.push(nomeTrim);
+          (evCapPayload as any).__needsReason = true;
+        }
+      }
+
       cleanEventos.push({
         nome: nomeTrim,
         target_cpa: targetCpa,
-        budget_monthly: budgetMonthly
+        budget_monthly: budgetMonthly,
+        cap: evCapPayload
       });
     }
 
@@ -853,18 +949,33 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       });
     }
 
-    // Se ha cap(s) renegociado(s) e ainda nao temos a data efetiva, abre modal
-    // e adia o submit. O modal chama submitWith(dataEfetiva) ao confirmar.
+    // Se ha cap(s) de publisher renegociado(s) e ainda nao temos a data efetiva,
+    // abre modal e adia o submit. O modal preenche capEffectiveDate ao confirmar.
     if (capsRenegociados.length > 0 && !capEffectiveDate) {
       setPendingSubmit(true);
       setCapRenegPublishers(capsRenegociados);
       return;
     }
-    // Aplica a data efetiva nos caps renegociados.
+    // Se ha cap(s) de EVENTO renegociado(s) e ainda nao temos o motivo, abre o
+    // modal de motivo e adia o submit (sequencial ao de publisher, se houver).
+    if (eventoCapsRenegociados.length > 0 && !eventoCapReason) {
+      setPendingEventoCapSubmit(true);
+      setEventoCapRenegEventos(eventoCapsRenegociados);
+      return;
+    }
+    // Aplica a data efetiva nos caps de publisher renegociados.
     for (const cp of cleanPublishers) {
       if ((cp.cap as any).__needsEfetiva) {
         cp.cap.data_efetiva = capEffectiveDate || todayIso();
         delete (cp.cap as any).__needsEfetiva;
+      }
+    }
+    // Aplica o motivo nos caps de evento renegociados.
+    for (const ev of cleanEventos) {
+      const evCap = ev.cap as any;
+      if (evCap?.__needsReason) {
+        evCap.reason = eventoCapReason || null;
+        delete evCap.__needsReason;
       }
     }
 
@@ -919,9 +1030,11 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       }
     } catch (err: any) {
       setError(err?.message || "Falha ao salvar campanha.");
-      // Permite re-prompt da data efetiva numa nova tentativa.
+      // Permite re-prompt da data efetiva / motivo numa nova tentativa.
       setCapEffectiveDate("");
       setCapRenegPublishers([]);
+      setEventoCapReason("");
+      setEventoCapRenegEventos([]);
     } finally {
       setSubmitting(false);
     }
@@ -1288,45 +1401,55 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           </div>
 
           {eventos.map((row, idx) => (
-            <div
-              key={idx}
-              className={`grid items-center gap-2 ${
-                budgetMode === "per_event"
-                  ? "grid-cols-1 sm:grid-cols-[1fr,140px,140px,auto]"
-                  : "grid-cols-1 sm:grid-cols-[1fr,140px,auto]"
-              }`}
-            >
-              <input
-                type="text"
-                value={row.nome}
-                onChange={(e) => updateEvento(idx, { nome: e.target.value })}
-                placeholder="Nome do evento (ex: install, purchase)"
-                className={inputCls}
-              />
-              <PtBrCurrencyInput
-                value={row.target_cpa}
-                onChange={(v) => updateEvento(idx, { target_cpa: v })}
-                prefix={moedaSym}
-                aria-label="PO (CPA)"
-              />
-              {budgetMode === "per_event" && (
-                <PtBrCurrencyInput
-                  value={row.budget_monthly}
-                  onChange={(v) => updateEvento(idx, { budget_monthly: v })}
-                  prefix={moedaSym}
-                  aria-label="Budget mensal"
-                />
-              )}
-              <button
-                type="button"
-                onClick={() => removeEvento(idx)}
-                disabled={eventos.length <= 1}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
-                title="Remover"
-                aria-label="Remover evento"
+            <div key={idx} className="space-y-2">
+              <div
+                className={`grid items-center gap-2 ${
+                  budgetMode === "per_event"
+                    ? "grid-cols-1 sm:grid-cols-[1fr,140px,140px,auto]"
+                    : "grid-cols-1 sm:grid-cols-[1fr,140px,auto]"
+                }`}
               >
-                <Trash2 className="h-4 w-4" />
-              </button>
+                <input
+                  type="text"
+                  value={row.nome}
+                  onChange={(e) => updateEvento(idx, { nome: e.target.value })}
+                  placeholder="Nome do evento (ex: install, purchase)"
+                  className={inputCls}
+                />
+                <PtBrCurrencyInput
+                  value={row.target_cpa}
+                  onChange={(v) => updateEvento(idx, { target_cpa: v })}
+                  prefix={moedaSym}
+                  aria-label="PO (CPA)"
+                />
+                {budgetMode === "per_event" && (
+                  <PtBrCurrencyInput
+                    value={row.budget_monthly}
+                    onChange={(v) => updateEvento(idx, { budget_monthly: v })}
+                    prefix={moedaSym}
+                    aria-label="Budget mensal"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeEvento(idx)}
+                  disabled={eventos.length <= 1}
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
+                  title="Remover"
+                  aria-label="Remover evento"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+              {/* Cap deste evento (opcional) — mesmo padrao do cap de publisher */}
+              <CapBlock
+                cap={row.cap}
+                history={row.caps_historico}
+                onChange={(patch) => updateEventoCap(idx, patch)}
+                title="Cap deste evento"
+                hideVigenciaFim
+                renegNote=" Mudar o valor pede o motivo da renegociacao (vira nova vigencia)."
+              />
             </div>
           ))}
           <button
@@ -1686,6 +1809,17 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           }}
         />
       )}
+
+      {pendingEventoCapSubmit && (
+        <EventoCapReasonModal
+          eventos={eventoCapRenegEventos}
+          onConfirm={(reason) => setEventoCapReason(reason)}
+          onCancel={() => {
+            setPendingEventoCapSubmit(false);
+            setEventoCapRenegEventos([]);
+          }}
+        />
+      )}
     </form>
   );
 }
@@ -1720,17 +1854,26 @@ function capHistLabel(h: CampanhaCapHistorico): string {
 function CapBlock({
   cap,
   history,
-  onChange
+  onChange,
+  title = "Cap de eventos",
+  hideVigenciaFim = false,
+  renegNote
 }: {
   cap: CapRow;
   history: CampanhaCapHistorico[];
   onChange: (patch: Partial<CapRow>) => void;
+  /** Titulo do bloco (default "Cap de eventos"; evento usa "Cap deste evento"). */
+  title?: string;
+  /** Esconde o campo "Vigencia: fim" (cap de evento nao usa vigencia_fim). */
+  hideVigenciaFim?: boolean;
+  /** Override do aviso de renegociacao (publisher = data efetiva; evento = motivo). */
+  renegNote?: string;
 }) {
   const active = cap.tipo !== "nenhum";
   return (
     <div className="rounded-lg border border-border bg-surface/40 p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
-        Cap de eventos
+        {title}
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[150px,130px,1fr]">
         <Field label="Tipo">
@@ -1785,7 +1928,11 @@ function CapBlock({
       </div>
       {active && (
         <>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div
+            className={`mt-3 grid grid-cols-1 gap-3 ${
+              hideVigenciaFim ? "" : "sm:grid-cols-2"
+            }`}
+          >
             <Field label="Vigencia: inicio">
               <input
                 type="date"
@@ -1797,22 +1944,25 @@ function CapBlock({
                 aria-label="Inicio da vigencia do cap"
               />
             </Field>
-            <Field label="Vigencia: fim (opcional)">
-              <input
-                type="date"
-                value={cap.vigencia_fim}
-                onChange={(e) => onChange({ vigencia_fim: e.target.value })}
-                className={inputCls}
-                aria-label="Fim da vigencia do cap"
-              />
-            </Field>
+            {!hideVigenciaFim && (
+              <Field label="Vigencia: fim (opcional)">
+                <input
+                  type="date"
+                  value={cap.vigencia_fim}
+                  onChange={(e) => onChange({ vigencia_fim: e.target.value })}
+                  className={inputCls}
+                  aria-label="Fim da vigencia do cap"
+                />
+              </Field>
+            )}
           </div>
           <p className="mt-1 text-xs text-muted">
             {cap.tipo === "diario"
               ? "Cap diario corta dia-a-dia (sem netting)."
               : "Cap mensal corta no acumulado do mes."}
             {cap.initial != null &&
-              " Mudar o valor pede a data efetiva (vira nova vigencia)."}
+              (renegNote ??
+                " Mudar o valor pede a data efetiva (vira nova vigencia).")}
           </p>
         </>
       )}
@@ -1887,6 +2037,66 @@ function CapEffectiveDateModal({
             type="button"
             onClick={() => date && onConfirm(date)}
             disabled={!date}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            Confirmar e salvar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal simples (so motivo) pra capturar o motivo da renegociacao do cap de um
+// evento. Espelha o CapEffectiveDateModal, mas com input de texto (motivo).
+function EventoCapReasonModal({
+  eventos,
+  onConfirm,
+  onCancel
+}: {
+  eventos: string[];
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const trimmed = reason.trim();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="mb-2 text-base font-semibold text-foreground">
+          Motivo da mudanca de cap
+        </h3>
+        <p className="mb-4 text-sm text-muted">
+          O cap mudou para{" "}
+          {eventos.length === 1
+            ? `o evento "${eventos[0]}"`
+            : `${eventos.length} eventos`}
+          . Informe o motivo da renegociacao — o novo cap vale a partir da data de
+          inicio da vigencia informada (o anterior fica no historico).
+        </p>
+        <label className="mb-1 block text-xs font-medium text-muted">
+          Motivo
+        </label>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          autoFocus
+          rows={3}
+          placeholder="Ex: renegociacao com o cliente, ajuste de budget..."
+          className={textareaCls + " mb-4"}
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => trimmed && onConfirm(trimmed)}
+            disabled={!trimmed}
             className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             Confirmar e salvar
