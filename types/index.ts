@@ -505,7 +505,11 @@ export interface Fechamento {
   imposto_pct?: number | null; // percentual (ex: 12.27); null se nao-Wave
   fx_rate?: number | null; // taxa US$ -> moeda do fechamento; null se nao informado
   custo_publisher_total?: number | null; // custo dos publishers, ja convertido
-  // Fatia da Caracol = (spend_final - spend_final*imposto_pct/100 - custo_publisher_total)/3
+  lucro_bruto?: number | null; // NF faturada − custo publisher
+  lucro_liquido?: number | null; // lucro bruto − imposto
+  margem_caracol?: number | null; // fatia da Caracol = lucro liquido / 3
+  // DEPRECATED: agora == margem_caracol (mantido por compat; usar margem_caracol).
+  // NAO e "tudo que a Caracol recebe" — o a receber de Wave = custo + margem.
   a_receber_liquido?: number | null;
 }
 

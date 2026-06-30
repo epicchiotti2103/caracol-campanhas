@@ -374,15 +374,17 @@ export function CampanhaFechamentoModal({
     return total;
   }, [publishers, moedaRecebimento, fxRateNumber]);
 
-  // A receber liquido (fatia da Caracol). Previa com a MESMA formula do backend.
-  const aReceberLiquidoLive = useMemo(
-    () =>
-      (spendFinalNumber -
-        (spendFinalNumber * impostoPctNumber) / 100 -
-        custoPublisherLive) /
-      3,
-    [spendFinalNumber, impostoPctNumber, custoPublisherLive]
-  );
+  // Cadeia de calculo do Wave (previa com a MESMA formula do backend; o backend
+  // recalcula no save). NF faturada = spend_final do cliente.
+  const waveCalc = useMemo(() => {
+    const imposto = (spendFinalNumber * impostoPctNumber) / 100;
+    const lucroBruto = spendFinalNumber - custoPublisherLive; // NF − custo
+    const lucroLiquido = lucroBruto - imposto; // − imposto
+    const margemCaracol = lucroLiquido / 3; // fatia da Caracol (1/3)
+    // A receber de Wave = reembolso do custo + margem Caracol.
+    const aReceberWave = custoPublisherLive + margemCaracol;
+    return { imposto, lucroBruto, lucroLiquido, margemCaracol, aReceberWave };
+  }, [spendFinalNumber, impostoPctNumber, custoPublisherLive]);
 
   // Troca de cliente: pre-preenche o imposto% com o default do parceiro (se vazio).
   const handleClientChange = (id: string) => {
@@ -913,30 +915,71 @@ export function CampanhaFechamentoModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div className="rounded-lg border border-border bg-background/40 p-3">
-                        <p className="text-[11px] uppercase tracking-wider text-muted">
-                          Custo publishers (convertido)
-                        </p>
-                        <p className="mt-1 font-mono text-sm text-foreground">
-                          {formatCurrency(custoPublisherLive, moedaRecebimento)}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-3">
-                        <p className="text-[11px] uppercase tracking-wider text-violet-200/80">
-                          A receber liquido (Caracol)
-                        </p>
-                        <p className="mt-1 font-mono text-lg font-semibold text-violet-200">
-                          {formatCurrency(aReceberLiquidoLive, moedaRecebimento)}
-                        </p>
-                      </div>
+                    {/* Conta do Wave: NF -> custo -> lucro -> margem Caracol */}
+                    <div className="space-y-1.5 rounded-lg border border-border bg-background/40 p-3 text-sm">
+                      <WaveRow
+                        label={`NF faturada (spend final)`}
+                        value={formatCurrency(spendFinalNumber, moedaRecebimento)}
+                      />
+                      <WaveRow
+                        label="Custo publishers (convertido)"
+                        value={`− ${formatCurrency(
+                          custoPublisherLive,
+                          moedaRecebimento
+                        )}`}
+                      />
+                      <WaveRow
+                        label="Lucro bruto (NF − custo)"
+                        value={formatCurrency(
+                          waveCalc.lucroBruto,
+                          moedaRecebimento
+                        )}
+                        strong
+                      />
+                      <WaveRow
+                        label={`Imposto (${impostoPct || "0"}%)`}
+                        value={`− ${formatCurrency(
+                          waveCalc.imposto,
+                          moedaRecebimento
+                        )}`}
+                      />
+                      <WaveRow
+                        label="Lucro liquido (− imposto)"
+                        value={formatCurrency(
+                          waveCalc.lucroLiquido,
+                          moedaRecebimento
+                        )}
+                        strong
+                      />
+                      <WaveRow
+                        label="Margem Caracol (1/3)"
+                        value={formatCurrency(
+                          waveCalc.margemCaracol,
+                          moedaRecebimento
+                        )}
+                      />
+                    </div>
+
+                    <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-violet-200/80">
+                        A receber de Wave (reembolso custo + margem Caracol)
+                      </p>
+                      <p className="mt-1 font-mono text-lg font-semibold text-violet-200">
+                        {formatCurrency(waveCalc.aReceberWave, moedaRecebimento)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-violet-200/70">
+                        ={" "}
+                        {formatCurrency(custoPublisherLive, moedaRecebimento)} (custo)
+                        + {formatCurrency(waveCalc.margemCaracol, moedaRecebimento)}{" "}
+                        (margem)
+                      </p>
                     </div>
 
                     <p className="text-xs text-amber-200/90">
                       O spend final ({formatCurrency(spendFinalNumber, moedaRecebimento)})
-                      e o valor cheio do cliente — NAO e o que a Caracol recebe. A
-                      fatia liquida = (spend final − imposto − custo publishers) ÷ 3.
-                      Previa client-side; o backend recalcula no salvamento.
+                      e a NF cheia do cliente — NAO e o que a Caracol fica. A margem
+                      da Caracol e so 1/3 do lucro liquido; o restante e repasse aos
+                      parceiros. Previa client-side; o backend recalcula no salvamento.
                     </p>
                   </div>
                 )}
@@ -1306,6 +1349,30 @@ function ErrorBox({ text }: { text: string }) {
     <div className="flex items-start gap-2.5 rounded-lg border border-danger/20 bg-danger/10 p-3">
       <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
       <p className="text-sm text-danger">{text}</p>
+    </div>
+  );
+}
+
+// Linha label/valor da conta do Wave (NF -> custo -> lucro -> margem).
+function WaveRow({
+  label,
+  value,
+  strong
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className={strong ? "text-foreground" : "text-muted"}>{label}</span>
+      <span
+        className={`font-mono ${
+          strong ? "font-semibold text-foreground" : "text-foreground"
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
