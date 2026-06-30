@@ -542,6 +542,16 @@ export interface FechamentoSummary {
   spend_final_total_brl: number;
   spend_final_total_usd: number;
   by_moeda: Record<string, number>;
+  // ---- Lucro consolidado do mes (por moeda) ----
+  // Lucro bruto = Σ (NF faturada − custo publisher).
+  lucro_bruto_brl?: number;
+  lucro_bruto_usd?: number;
+  // Lucro liquido = Σ (NF − custo − imposto).
+  lucro_liquido_brl?: number;
+  lucro_liquido_usd?: number;
+  // LL Caracol = Σ lucro liquido (÷3 quando Wave; inteiro no normal).
+  ll_caracol_brl?: number;
+  ll_caracol_usd?: number;
 }
 
 // ---------- Brutos arquivados (AppsFlyer) ----------

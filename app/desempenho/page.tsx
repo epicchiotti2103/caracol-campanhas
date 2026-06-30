@@ -453,6 +453,23 @@ function DesempenhoDashboard() {
   );
 }
 
+// Monta o valor de um KPI multi-moeda: BRL no valor + USD no sublabel (quando
+// > 0). Sem dados -> "..." enquanto carrega, "—" depois.
+function moedaPairCard(
+  brl: number | null | undefined,
+  usd: number | null | undefined,
+  hasData: boolean,
+  loading: boolean
+): { value: string; sub?: string } {
+  if (!hasData) return { value: loading ? "..." : "—" };
+  const b = brl || 0;
+  const u = usd || 0;
+  return {
+    value: formatCurrency(b, "BRL"),
+    sub: u > 0 ? `+ ${formatCurrency(u, "USD")}` : undefined
+  };
+}
+
 function BigNumbers({
   summary,
   fechSummary,
@@ -475,8 +492,29 @@ function BigNumbers({
       ? (fechSummary.spend_final_total_brl || 0)
       : null;
 
+  // Big numbers de lucro: valor em BRL + USD (sublabel) quando o USD > 0, no
+  // mesmo padrao do "Faturamento fechado".
+  const lucroBruto = moedaPairCard(
+    fechSummary?.lucro_bruto_brl,
+    fechSummary?.lucro_bruto_usd,
+    fechSummary != null,
+    loading
+  );
+  const lucroLiquido = moedaPairCard(
+    fechSummary?.lucro_liquido_brl,
+    fechSummary?.lucro_liquido_usd,
+    fechSummary != null,
+    loading
+  );
+  const llCaracol = moedaPairCard(
+    fechSummary?.ll_caracol_brl,
+    fechSummary?.ll_caracol_usd,
+    fechSummary != null,
+    loading
+  );
+
   return (
-    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <KpiCard
         label="Budget total do mes"
         value={
@@ -530,6 +568,21 @@ function BigNumbers({
               }`
             : undefined
         }
+      />
+      <KpiCard
+        label="Lucro Bruto"
+        value={lucroBruto.value}
+        sublabel={lucroBruto.sub}
+      />
+      <KpiCard
+        label="Lucro Liquido"
+        value={lucroLiquido.value}
+        sublabel={lucroLiquido.sub}
+      />
+      <KpiCard
+        label="LL Caracol"
+        value={llCaracol.value}
+        sublabel={llCaracol.sub}
       />
       <KpiCard
         label="Campanhas no mes"
