@@ -118,6 +118,11 @@ export interface CampanhaMediaSource {
 export interface CampanhaPublisher {
   id?: string | null;
   nome: string;
+  // FK pro cadastro de fornecedor (suppliers). Fase 0 da unificacao de publisher:
+  // o nome deixou de ser texto livre e passou a referenciar um supplier. O backend
+  // resolve `nome` a partir do supplier_id. Campanhas antigas ja vem com supplier_id
+  // populado via migration; defensivo: pode vir null (cai no `nome` como fallback).
+  supplier_id?: string | null;
   media_sources: CampanhaMediaSource[];
   payouts: CampanhaPublisherPayout[];
   // Moeda do PO desse publisher (aplica a todos os POs dele). Default 'USD'.
@@ -235,6 +240,25 @@ export interface CampanhaUser {
   user_name?: string | null;
   user_email?: string | null;
   role: CampanhaUserRole;
+}
+
+// ---- Suppliers (cadastro de fornecedores) ----
+
+/**
+ * Fornecedor cadastrado. Quando `is_publisher`, pode ser selecionado como
+ * publisher de uma campanha. `default_moeda` pre-preenche a moeda do PO ao
+ * escolher o fornecedor no form. Fonte: GET /suppliers (backend do Tracker).
+ */
+export interface Supplier {
+  id: string;
+  name: string;
+  default_moeda?: Moeda | string | null;
+  is_publisher?: boolean | null;
+  active?: boolean | null;
+}
+
+export interface SuppliersResponse {
+  items: Supplier[];
 }
 
 // ---- Metrics (api_af) ----

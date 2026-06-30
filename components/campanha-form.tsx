@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertCircle, Plus, Trash2, Ban, RotateCcw } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  Plus,
+  Trash2,
+  Ban,
+  RotateCcw,
+  ChevronDown,
+  Search
+} from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
@@ -29,7 +38,8 @@ import type {
   CampanhaPublisherCap,
   CampanhaStatus,
   CampanhaTipo,
-  Moeda
+  Moeda,
+  Supplier
 } from "@/types";
 
 const STATUS_OPTIONS: { value: CampanhaStatus; label: string }[] = [
@@ -130,6 +140,10 @@ interface CapRow {
 
 interface PublisherRow {
   nome: string;
+  // FK pro fornecedor (suppliers). O nome agora vem do supplier escolhido; o
+  // backend resolve `nome` a partir daqui. null = ainda nao escolhido (ou
+  // campanha antiga sem supplier_id -> usa `nome` como fallback no select).
+  supplier_id: string | null;
   media_sources: MediaSourceRow[]; // lista dinamica de objetos
   payouts: PublisherPayoutRow[];
   moeda: Moeda; // moeda do PO desse publisher (aplica a todos os POs)
@@ -213,6 +227,7 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
       : [emptyMediaSourceRow()];
   return {
     nome: p.nome ?? "",
+    supplier_id: p.supplier_id ?? null,
     media_sources: msRows,
     payouts: (p.payouts ?? []).map((po) => ({
       evento_nome: po.evento_nome ?? "",
@@ -338,6 +353,37 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     [publishers]
   );
 
+  // Fornecedores (suppliers) que podem ser publishers — alimenta o seletor de
+  // nome de cada publisher. Carregado uma vez no mount. Tolera falha (cai em []).
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliersLoading, setSuppliersLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiFetch(
+          "/suppliers?is_publisher=true&active=true"
+        );
+        if (!alive) return;
+        const items: Supplier[] = Array.isArray(res?.items) ? res.items : [];
+        items.sort((a, b) =>
+          (a.name || "").localeCompare(b.name || "", "pt-BR", {
+            sensitivity: "base"
+          })
+        );
+        setSuppliers(items);
+      } catch {
+        if (alive) setSuppliers([]);
+      } finally {
+        if (alive) setSuppliersLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Criativo e observacoes
   const [criativo, setCriativo] = useState(initial?.criativo ?? "");
   const [obs, setObs] = useState(initial?.obs ?? "");
@@ -447,11 +493,31 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
     );
   };
+  // Escolha de fornecedor pro publisher: grava supplier_id + nome (do supplier).
+  // Pre-preenche a moeda do PO com a default_moeda do supplier APENAS na primeira
+  // escolha (supplier_id ainda null), pra nao sobrescrever ajuste manual do user.
+  const selectPublisherSupplier = (idx: number, supplier: Supplier) => {
+    setPublishers((prev) =>
+      prev.map((row, i) => {
+        if (i !== idx) return row;
+        const patch: Partial<PublisherRow> = {
+          supplier_id: supplier.id,
+          nome: supplier.name ?? row.nome
+        };
+        if (row.supplier_id == null) {
+          const dm = supplier.default_moeda;
+          if (dm === "BRL" || dm === "USD") patch.moeda = dm;
+        }
+        return { ...row, ...patch };
+      })
+    );
+  };
   const addPublisher = () =>
     setPublishers((prev) => [
       ...prev,
       {
         nome: "",
+        supplier_id: null,
         media_sources: [emptyMediaSourceRow()],
         // Ja inicia com 1 linha de payout por evento atual (vazias).
         payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" })),
@@ -663,6 +729,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     // reconcilia active/reason/data por nome) + PO por evento + cap de eventos.
     const cleanPublishers: {
       nome: string;
+      supplier_id: string | null;
       media_sources: string[];
       payouts: { evento_nome: string; payout: number | null }[];
       moeda: Moeda;
@@ -674,16 +741,29 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     const capsRenegociados: string[] = [];
     for (let i = 0; i < publishers.length; i++) {
       const pub = publishers[i];
+      const supplierId = pub.supplier_id || null;
       const nomeTrim = pub.nome.trim();
       const cleanMs = pub.media_sources
         .map((ms) => ms.name.trim())
         .filter(Boolean);
-      // Pula publishers totalmente vazios (sem nome, sem ms, sem payout, sem cap).
+      // Pula publishers totalmente vazios (sem fornecedor, sem nome, sem ms,
+      // sem payout, sem cap).
       const hasPayout = pub.payouts.some((po) => po.payout.trim());
       const hasCap = pub.cap.tipo !== "nenhum";
-      if (!nomeTrim && cleanMs.length === 0 && !hasPayout && !hasCap) continue;
-      if (!nomeTrim) {
-        setError(`Publisher ${i + 1}: informe o nome (ou remova a linha).`);
+      if (
+        !supplierId &&
+        !nomeTrim &&
+        cleanMs.length === 0 &&
+        !hasPayout &&
+        !hasCap
+      )
+        continue;
+      // O nome agora vem do fornecedor escolhido. Defensivo: campanha antiga
+      // pode ter nome sem supplier_id (entao aceita o nome como fallback).
+      if (!supplierId && !nomeTrim) {
+        setError(
+          `Publisher ${i + 1}: selecione o fornecedor (ou remova a linha).`
+        );
         return;
       }
 
@@ -764,6 +844,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
 
       cleanPublishers.push({
         nome: nomeTrim,
+        supplier_id: supplierId,
         media_sources: cleanMs,
         payouts: cleanPayouts,
         moeda: pub.moeda === "BRL" ? "BRL" : "USD",
@@ -1430,15 +1511,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr,140px]">
-                <Field label="Nome">
-                  <input
-                    type="text"
-                    value={pub.nome}
-                    onChange={(e) =>
-                      updatePublisher(pubIdx, { nome: e.target.value })
-                    }
-                    placeholder="Ex: Mobupps, Appnext"
-                    className={inputCls}
+                <Field label="Fornecedor">
+                  <SupplierCombobox
+                    suppliers={suppliers}
+                    loading={suppliersLoading}
+                    value={pub.supplier_id}
+                    fallbackName={pub.nome}
+                    onSelect={(s) => selectPublisherSupplier(pubIdx, s)}
                   />
                 </Field>
                 <Field label="Moeda do PO" hint="aplica a todos os POs">
@@ -2051,6 +2130,136 @@ function Section({
       </div>
       <div className="space-y-4">{children}</div>
     </section>
+  );
+}
+
+// Combobox com busca pra escolher o fornecedor (supplier) de um publisher.
+// Mostra o supplier selecionado (por id); se a campanha for antiga e o publisher
+// ainda nao tiver supplier_id, cai no `fallbackName` (nome legado) ate o user
+// escolher um. Lista filtravel por nome — escala pra dezenas de fornecedores.
+function SupplierCombobox({
+  suppliers,
+  loading,
+  value,
+  fallbackName,
+  onSelect
+}: {
+  suppliers: Supplier[];
+  loading?: boolean;
+  value: string | null;
+  fallbackName?: string;
+  onSelect: (s: Supplier) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = useMemo(
+    () => suppliers.find((s) => s.id === value) || null,
+    [suppliers, value]
+  );
+  // Nome legado: publisher sem supplier_id (campanha antiga) ainda mostra o nome
+  // texto-livre como fallback, sinalizando que precisa escolher um fornecedor.
+  const legacyName = value == null ? fallbackName?.trim() || "" : "";
+  const buttonLabel = selected?.name || legacyName;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) => (s.name || "").toLowerCase().includes(q));
+  }, [suppliers, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`${inputCls} flex items-center justify-between gap-2 text-left`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span
+          className={`truncate ${
+            buttonLabel ? "text-foreground" : "text-muted"
+          }`}
+        >
+          {buttonLabel ||
+            (loading
+              ? "Carregando fornecedores..."
+              : "Selecione o fornecedor")}
+          {legacyName && !selected ? " — sem cadastro" : ""}
+        </span>
+        <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted" />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+          <div className="border-b border-border p-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar fornecedor..."
+                className={`${inputCls} pl-8`}
+              />
+            </div>
+          </div>
+          <ul className="max-h-56 overflow-auto py-1" role="listbox">
+            {loading && (
+              <li className="px-3 py-2 text-xs text-muted">Carregando...</li>
+            )}
+            {!loading && filtered.length === 0 && (
+              <li className="px-3 py-2 text-xs text-muted">
+                Nenhum fornecedor encontrado.
+              </li>
+            )}
+            {filtered.map((s) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelect(s);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-background ${
+                    s.id === value ? "text-primary" : "text-foreground"
+                  }`}
+                  role="option"
+                  aria-selected={s.id === value}
+                >
+                  <span className="truncate">{s.name}</span>
+                  {s.default_moeda && (
+                    <span className="flex-shrink-0 text-xs text-muted">
+                      {moedaShort(String(s.default_moeda))}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
