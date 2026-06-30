@@ -157,6 +157,10 @@ export function CampanhaFechamentoModal({
   const [spendFinalInput, setSpendFinalInput] = useState("");
   const [spendRealRaw, setSpendRealRaw] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
+  // Partilha Wave (revenue share): imposto% e cambio (US$ -> moeda do fechamento).
+  // So usados/exibidos quando o cliente e parceiro de partilha.
+  const [impostoPct, setImpostoPct] = useState("");
+  const [fxRate, setFxRate] = useState("");
   const [publishers, setPublishers] = useState<PublisherRow[]>([]);
   // Linhas de cap com o breakdown expandido (por indice de publisher).
   const [expandedCaps, setExpandedCaps] = useState<Set<number>>(new Set());
@@ -201,6 +205,12 @@ export function CampanhaFechamentoModal({
       );
       setSpendRealRaw(sumReal > 0 ? sumReal : null);
       setNotes(f.notes || "");
+      setImpostoPct(
+        f.imposto_pct != null ? blurFormatNumberPtBr(String(f.imposto_pct), 2) : ""
+      );
+      setFxRate(
+        f.fx_rate != null ? blurFormatNumberPtBr(String(f.fx_rate), 4) : ""
+      );
       setPublishers(
         sortRows((f.publishers || []).map((p) => toRow(p, f.moeda || moeda)))
       );
@@ -312,6 +322,80 @@ export function CampanhaFechamentoModal({
     if (sumComparable == null) return false;
     return Math.abs(sumComparable - spendFinalNumber) > 0.01;
   }, [sumComparable, spendFinalNumber]);
+
+  // ----- Partilha Wave (revenue share) -----
+  // Cliente selecionado (da lista carregada). Usado pra saber se e parceiro de
+  // partilha e qual o imposto% default.
+  const selectedClient = useMemo(
+    () => clients.find((c) => c.id === clientId) || null,
+    [clients, clientId]
+  );
+
+  // E fechamento de partilha? Prioriza o cliente selecionado; se ele ainda nao
+  // esta carregado na lista mas e o mesmo do fechamento, cai no flag do backend.
+  const isRevenueShare = useMemo(() => {
+    if (selectedClient) return selectedClient.is_revenue_share_partner === true;
+    if (clientId && fechamento?.client_id === clientId) {
+      return fechamento?.is_revenue_share === true;
+    }
+    return false;
+  }, [selectedClient, clientId, fechamento]);
+
+  const impostoPctNumber = useMemo(() => {
+    const n = parseNumberPtBr(impostoPct);
+    return Number.isFinite(n) ? n : 0;
+  }, [impostoPct]);
+
+  const fxRateNumber = useMemo(() => {
+    const n = parseNumberPtBr(fxRate);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [fxRate]);
+
+  // Ha publisher pagando em moeda diferente da do fechamento? (precisa de cambio)
+  const hasForeignPublisher = useMemo(
+    () => publishers.some((p) => p.moeda !== moedaRecebimento),
+    [publishers, moedaRecebimento]
+  );
+
+  // Custo dos publishers convertido pra moeda do fechamento (previa client-side;
+  // o backend recalcula no save). Publisher na moeda do fechamento entra direto;
+  // em moeda estrangeira (US$) multiplica pelo cambio (se informado).
+  const custoPublisherLive = useMemo(() => {
+    let total = 0;
+    for (const p of publishers) {
+      const v = parseNumberPtBr(p.spend_final_input);
+      const val = Number.isFinite(v) ? v : 0;
+      if (p.moeda === moedaRecebimento) {
+        total += val;
+      } else {
+        total += fxRateNumber != null ? val * fxRateNumber : val;
+      }
+    }
+    return total;
+  }, [publishers, moedaRecebimento, fxRateNumber]);
+
+  // A receber liquido (fatia da Caracol). Previa com a MESMA formula do backend.
+  const aReceberLiquidoLive = useMemo(
+    () =>
+      (spendFinalNumber -
+        (spendFinalNumber * impostoPctNumber) / 100 -
+        custoPublisherLive) /
+      3,
+    [spendFinalNumber, impostoPctNumber, custoPublisherLive]
+  );
+
+  // Troca de cliente: pre-preenche o imposto% com o default do parceiro (se vazio).
+  const handleClientChange = (id: string) => {
+    setClientId(id);
+    const c = clients.find((x) => x.id === id);
+    if (c?.is_revenue_share_partner) {
+      setImpostoPct((prev) =>
+        prev.trim()
+          ? prev
+          : blurFormatNumberPtBr(String(c.default_imposto_pct ?? 12.27), 2)
+      );
+    }
+  };
 
   // PO acordado (cadastro) indexado por nome do publisher (case-insensitive).
   // Referencia pro user ter o numero na frente — SEM calculo de margem.
@@ -491,6 +575,9 @@ export function CampanhaFechamentoModal({
       client_id: clientId,
       spend_final: spendFinalNumber,
       notes: notes.trim() || null,
+      // Partilha Wave: so envia imposto%/cambio quando o cliente e parceiro.
+      imposto_pct: isRevenueShare ? impostoPctNumber : null,
+      fx_rate: isRevenueShare ? fxRateNumber : null,
       publishers: publishersPayload
     };
 
@@ -565,6 +652,16 @@ export function CampanhaFechamentoModal({
           : ""
       );
       setNotes(saved.notes || "");
+      setImpostoPct(
+        saved.imposto_pct != null
+          ? blurFormatNumberPtBr(String(saved.imposto_pct), 2)
+          : ""
+      );
+      setFxRate(
+        saved.fx_rate != null
+          ? blurFormatNumberPtBr(String(saved.fx_rate), 4)
+          : ""
+      );
       setPublishers(
         sortRows(
           (saved.publishers || []).map((p) => toRow(p, saved.moeda || moeda))
@@ -662,7 +759,7 @@ export function CampanhaFechamentoModal({
                   )}
                   <select
                     value={clientId}
-                    onChange={(e) => setClientId(e.target.value)}
+                    onChange={(e) => handleClientChange(e.target.value)}
                     disabled={readOnly || loadingClients}
                     className={inputCls}
                   >
@@ -752,6 +849,97 @@ export function CampanhaFechamentoModal({
                     </p>
                   </div>
                 </div>
+
+                {/* Partilha Wave (revenue share) */}
+                {isRevenueShare && (
+                  <div className="space-y-3 rounded-lg border border-violet-500/30 bg-violet-500/5 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-violet-300">
+                        Partilha (Wave)
+                      </h4>
+                      <span className="text-[11px] text-violet-200/70">
+                        Cliente parceiro de partilha — a Caracol recebe so a fatia
+                        liquida
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-foreground">
+                          Imposto %
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={impostoPct}
+                            onChange={(e) =>
+                              setImpostoPct(sanitizeNumberInput(e.target.value))
+                            }
+                            onBlur={(e) =>
+                              setImpostoPct(blurFormatNumberPtBr(e.target.value, 2))
+                            }
+                            disabled={readOnly}
+                            placeholder="12,27"
+                            className={inputCls + " flex-1"}
+                          />
+                          <span className="text-sm text-muted">%</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-foreground">
+                          Cambio (US$ → {moedaPrefix})
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={fxRate}
+                          onChange={(e) =>
+                            setFxRate(sanitizeNumberInput(e.target.value))
+                          }
+                          onBlur={(e) =>
+                            setFxRate(blurFormatNumberPtBr(e.target.value, 4))
+                          }
+                          disabled={readOnly}
+                          placeholder="0,0000"
+                          className={inputCls}
+                        />
+                        <p className="mt-1 text-xs text-muted">
+                          {hasForeignPublisher
+                            ? "Ha publisher em moeda diferente — usado pra converter o custo."
+                            : "Usado pra converter custo de publisher em moeda diferente."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border border-border bg-background/40 p-3">
+                        <p className="text-[11px] uppercase tracking-wider text-muted">
+                          Custo publishers (convertido)
+                        </p>
+                        <p className="mt-1 font-mono text-sm text-foreground">
+                          {formatCurrency(custoPublisherLive, moedaRecebimento)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-3">
+                        <p className="text-[11px] uppercase tracking-wider text-violet-200/80">
+                          A receber liquido (Caracol)
+                        </p>
+                        <p className="mt-1 font-mono text-lg font-semibold text-violet-200">
+                          {formatCurrency(aReceberLiquidoLive, moedaRecebimento)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-amber-200/90">
+                      O spend final ({formatCurrency(spendFinalNumber, moedaRecebimento)})
+                      e o valor cheio do cliente — NAO e o que a Caracol recebe. A
+                      fatia liquida = (spend final − imposto − custo publishers) ÷ 3.
+                      Previa client-side; o backend recalcula no salvamento.
+                    </p>
+                  </div>
+                )}
 
                 {/* Notas */}
                 <div>

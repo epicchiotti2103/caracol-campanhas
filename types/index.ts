@@ -384,6 +384,11 @@ export interface Client {
   contact_email?: string | null;
   notes?: string | null;
   active?: boolean;
+  // Parceria de partilha (Wave): quando true, o fechamento deste cliente e de
+  // revenue share — o modal mostra imposto% + cambio e o liquido (fatia Caracol).
+  is_revenue_share_partner?: boolean | null;
+  // Imposto% default pra pre-preencher o campo no fechamento (ex: 12.27).
+  default_imposto_pct?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -492,6 +497,16 @@ export interface Fechamento {
   // Janelas de pausa do mes (mesmo objeto do GET /status-windows). Usado pra
   // saber se houve pausa no mes e avisar quando a exclusao nao foi aplicada.
   status_windows?: CampanhaStatusWindowsResponse | null;
+
+  // ---- Partilha Wave (revenue share) ----
+  // is_revenue_share: o cliente do fechamento e parceiro de partilha (Wave) ->
+  // o modal mostra imposto% + cambio e o liquido (fatia da Caracol).
+  is_revenue_share?: boolean;
+  imposto_pct?: number | null; // percentual (ex: 12.27); null se nao-Wave
+  fx_rate?: number | null; // taxa US$ -> moeda do fechamento; null se nao informado
+  custo_publisher_total?: number | null; // custo dos publishers, ja convertido
+  // Fatia da Caracol = (spend_final - spend_final*imposto_pct/100 - custo_publisher_total)/3
+  a_receber_liquido?: number | null;
 }
 
 /** Body do POST /campanhas/{id}/fechamento?month=YYYY-MM. */
@@ -499,6 +514,10 @@ export interface FechamentoUpsertPayload {
   client_id: string;
   spend_final: number;
   notes?: string | null;
+  // Partilha Wave (revenue share): so relevante quando o cliente e parceiro.
+  // imposto_pct = percentual (ex: 12.27); fx_rate = US$ -> moeda do fechamento.
+  imposto_pct?: number | null;
+  fx_rate?: number | null;
   publishers: Array<{
     publisher_name: string;
     platform?: string | null;
