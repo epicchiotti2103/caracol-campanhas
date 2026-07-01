@@ -36,6 +36,7 @@ import type {
   CampanhaCapUnidade,
   CampanhaPublisherRenegociacao,
   CapBreakdownPeriodo,
+  CapEvento,
   Client,
   Fechamento,
   FechamentoPublisher,
@@ -87,6 +88,9 @@ interface PublisherRow {
   realizado_qty_bruto: number | null; // bruto (antes de excluir dias pausados)
   qty_excluida_pausa: number | null;
   spend_excluida_pausa: number | null;
+
+  // ---- Cap POR EVENTO (display only — NAO afeta pagamento) ----
+  caps_evento: CapEvento[];
 }
 
 function hasCap(p: PublisherRow): boolean {
@@ -119,7 +123,8 @@ function toRow(p: FechamentoPublisher, moeda: string | null | undefined): Publis
     pausa_aplicada: p.pausa_aplicada === true,
     realizado_qty_bruto: p.realizado_qty_bruto ?? null,
     qty_excluida_pausa: p.qty_excluida_pausa ?? null,
-    spend_excluida_pausa: p.spend_excluida_pausa ?? null
+    spend_excluida_pausa: p.spend_excluida_pausa ?? null,
+    caps_evento: Array.isArray(p.caps_evento) ? p.caps_evento : []
   };
 }
 
@@ -515,7 +520,8 @@ export function CampanhaFechamentoModal({
         pausa_aplicada: false,
         realizado_qty_bruto: null,
         qty_excluida_pausa: null,
-        spend_excluida_pausa: null
+        spend_excluida_pausa: null,
+        caps_evento: []
       }
     ]);
   const removePub = (idx: number) =>
@@ -1074,12 +1080,13 @@ export function CampanhaFechamentoModal({
                         {publishers.map((p, idx) => {
                           const capColSpan = readOnly ? 7 : 8;
                           const showCap = hasCap(p);
+                          const showCapEvento = p.caps_evento.length > 0;
                           const expanded = expandedCaps.has(idx);
                           return (
                           <Fragment key={p.id || `new-${idx}`}>
                           <tr
                             className={
-                              !showCap && idx < publishers.length - 1
+                              !showCap && !showCapEvento && idx < publishers.length - 1
                                 ? "border-b border-border"
                                 : ""
                             }
@@ -1200,7 +1207,7 @@ export function CampanhaFechamentoModal({
                               </td>
                             )}
                           </tr>
-                          {showCap && (
+                          {(showCap || showCapEvento) && (
                             <tr
                               className={
                                 idx < publishers.length - 1
@@ -1209,16 +1216,24 @@ export function CampanhaFechamentoModal({
                               }
                             >
                               <td colSpan={capColSpan} className="px-3 pb-3 pt-0">
-                                <CapExcedenteBlock
-                                  row={p}
-                                  moeda={p.moeda}
-                                  expanded={expanded}
-                                  onToggleExpand={() => toggleCapExpanded(idx)}
-                                  onToggleAprovado={(v) =>
-                                    toggleExcedente(idx, v)
-                                  }
-                                  readOnly={readOnly}
-                                />
+                                {showCap && (
+                                  <CapExcedenteBlock
+                                    row={p}
+                                    moeda={p.moeda}
+                                    expanded={expanded}
+                                    onToggleExpand={() => toggleCapExpanded(idx)}
+                                    onToggleAprovado={(v) =>
+                                      toggleExcedente(idx, v)
+                                    }
+                                    readOnly={readOnly}
+                                  />
+                                )}
+                                {showCapEvento && (
+                                  <CapsEventoBlock
+                                    caps={p.caps_evento}
+                                    className={showCap ? "mt-2" : ""}
+                                  />
+                                )}
                               </td>
                             </tr>
                           )}
@@ -1260,6 +1275,16 @@ export function CampanhaFechamentoModal({
                   </div>
                 )}
               </section>
+
+              {/* Section 3: Cap por evento da CAMPANHA (informativo) */}
+              {(fechamento?.caps_evento?.length ?? 0) > 0 && (
+                <section className="space-y-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-primary">
+                    Caps por evento (campanha)
+                  </h3>
+                  <CapsEventoBlock caps={fechamento!.caps_evento!} />
+                </section>
+              )}
 
               {error && fechamento && <ErrorBox text={error} />}
             </div>
@@ -1570,6 +1595,81 @@ function CapExcedenteBlock({
           <span className="text-muted">(sem excedente neste mes)</span>
         )}
       </label>
+    </div>
+  );
+}
+
+/**
+ * Bloco INFORMATIVO do cap POR EVENTO — nao afeta o pagamento.
+ * Usado por publisher (dentro da sub-linha do cap) e na raiz (soma da campanha).
+ * Mostra, por evento: realizado / valido / excedente em quantidade de eventos.
+ * Cor sky pra diferenciar visualmente do cap de publisher (amber, que afeta pagamento).
+ */
+function CapsEventoBlock({
+  caps,
+  className
+}: {
+  caps: CapEvento[];
+  className?: string;
+}) {
+  if (!caps || caps.length === 0) return null;
+  return (
+    <div
+      className={`rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 ${
+        className ?? ""
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-sky-300">
+          Apuracao por evento
+        </span>
+        <span className="text-[11px] italic text-sky-200/70">
+          apuracao por evento (nao altera pagamento)
+        </span>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {caps.map((c, i) => {
+          const excedente = c.excedente_qty ?? 0;
+          const hasExc = excedente > 0.0001;
+          return (
+            <div
+              key={`${c.evento_nome}-${i}`}
+              className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs"
+            >
+              <span className="font-medium text-foreground">
+                Evento {c.evento_nome || "—"}
+              </span>
+              <span className="text-muted">
+                cap {capTipoLabelPt(c.cap_tipo ?? null)}
+              </span>
+              <span className="text-muted">
+                realizado{" "}
+                <span className="font-mono text-foreground">
+                  {fmtQty(c.realizado_qty)}
+                </span>
+              </span>
+              <span className="text-muted">
+                valido{" "}
+                <span className="font-mono text-emerald-300">
+                  {fmtQty(c.valido_qty)}
+                </span>
+              </span>
+              <span className="text-muted">
+                excedente{" "}
+                <span
+                  className={
+                    hasExc
+                      ? "font-mono font-semibold text-danger"
+                      : "font-mono text-foreground"
+                  }
+                >
+                  {fmtQty(c.excedente_qty)}
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

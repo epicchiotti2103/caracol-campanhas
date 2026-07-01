@@ -469,6 +469,37 @@ export interface FechamentoPublisher {
   realizado_qty_bruto?: number | null; // conversoes ANTES de excluir dias pausados
   qty_excluida_pausa?: number | null; // conversoes descartadas pela pausa
   spend_excluida_pausa?: number | null; // spend equivalente descartado
+
+  // ---- Apuracao do CAP POR EVENTO (display only — NAO afeta o pagamento) ----
+  // Cada item = um evento com cap. Informativo: mostra realizado/valido/excedente
+  // em quantidade de eventos. Ausente/[] quando o publisher nao tem cap por evento.
+  caps_evento?: CapEvento[];
+}
+
+/**
+ * Apuracao de um CAP POR EVENTO (mensal|diario) — INFORMATIVO, nao afeta o
+ * pagamento. Aparece por publisher e na raiz do fechamento (soma dos publishers).
+ */
+export interface CapEvento {
+  evento_nome: string;
+  cap_tipo?: CampanhaCapTipo | null; // 'mensal' | 'diario'
+  cap_unidade?: CampanhaCapUnidade | null; // 'eventos'
+  realizado_qty?: number | null;
+  valido_qty?: number | null;
+  excedente_qty?: number | null;
+  cap_breakdown?: CapEventoBreakdownPeriodo[];
+}
+
+/** Um periodo de vigencia do cap por evento (diario quebra em janelas). */
+export interface CapEventoBreakdownPeriodo {
+  inicio: string | null; // ISO YYYY-MM-DD
+  fim: string | null; // ISO YYYY-MM-DD
+  cap: number | null;
+  unidade?: CampanhaCapUnidade | null;
+  dias: number | null;
+  realizado: number | null;
+  valido: number | null;
+  excedente: number | null;
 }
 
 /**
@@ -518,6 +549,9 @@ export interface Fechamento {
   publishers: FechamentoPublisher[];
   // PO acordado do cadastro (referencia; casa por nome com `publishers`).
   publishers_cadastrados?: FechamentoPublisherCadastrado[];
+  // Cap por evento da CAMPANHA (soma dos publishers). Display only — nao afeta
+  // pagamento. Ausente/[] quando nao ha cap por evento.
+  caps_evento?: CapEvento[];
   // Pausa da campanha inteira (espelha os campos de `Campanha`). Aviso no modal.
   campanha_paused?: boolean;
   paused_at?: string | null;
