@@ -122,6 +122,7 @@ interface PublisherPayoutRow {
 interface MediaSourceRow {
   id: string | null;
   name: string;
+  link: string; // URL opcional (texto livre no form)
   active: boolean;
   deactivated_reason: string | null;
   deactivated_at: string | null;
@@ -204,6 +205,7 @@ function emptyMediaSourceRow(): MediaSourceRow {
   return {
     id: null,
     name: "",
+    link: "",
     active: true,
     deactivated_reason: null,
     deactivated_at: null,
@@ -249,6 +251,7 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
       ? p.media_sources.map((ms) => ({
           id: ms?.id ?? null,
           name: ms?.name ?? "",
+          link: ms?.link ?? "",
           active: ms?.active !== false,
           deactivated_reason: ms?.deactivated_reason ?? null,
           deactivated_at: ms?.deactivated_at ?? null,
@@ -626,6 +629,23 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           : pub
       )
     );
+  const updatePublisherMediaSourceLink = (
+    pubIdx: number,
+    msIdx: number,
+    value: string
+  ) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? {
+              ...pub,
+              media_sources: pub.media_sources.map((ms, j) =>
+                j === msIdx ? { ...ms, link: value } : ms
+              )
+            }
+          : pub
+      )
+    );
   // Aplica o resultado de um toggle (PATCH ja feito) na media source local.
   const setMediaSourceState = (
     pubIdx: number,
@@ -876,7 +896,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     const cleanPublishers: {
       nome: string;
       supplier_id: string | null;
-      media_sources: string[];
+      media_sources: { name: string; link: string | null }[];
       payouts: { evento_nome: string; payout: number | null }[];
       moeda: Moeda;
       // Lista autoritativa de caps do publisher: geral (evento_nome null) + um
@@ -952,8 +972,8 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       const supplierId = pub.supplier_id || null;
       const nomeTrim = pub.nome.trim();
       const cleanMs = pub.media_sources
-        .map((ms) => ms.name.trim())
-        .filter(Boolean);
+        .map((ms) => ({ name: ms.name.trim(), link: ms.link.trim() || null }))
+        .filter((ms) => ms.name);
       // Pula publishers totalmente vazios (sem fornecedor, sem nome, sem ms,
       // sem payout, sem cap).
       const hasPayout = pub.payouts.some((po) => po.payout.trim());
@@ -1762,6 +1782,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                       onChangeName={(value) =>
                         updatePublisherMediaSourceName(pubIdx, msIdx, value)
                       }
+                      onChangeLink={(value) =>
+                        updatePublisherMediaSourceLink(pubIdx, msIdx, value)
+                      }
                       onRemove={() =>
                         removePublisherMediaSource(pubIdx, msIdx)
                       }
@@ -2209,12 +2232,14 @@ function FormMediaSourceRow({
   ms,
   canRemove,
   onChangeName,
+  onChangeLink,
   onRemove,
   onToggled
 }: {
   ms: MediaSourceRow;
   canRemove: boolean;
   onChangeName: (value: string) => void;
+  onChangeLink: (value: string) => void;
   onRemove: () => void;
   onToggled: (patch: Partial<MediaSourceRow>) => void;
 }) {
@@ -2280,6 +2305,17 @@ function FormMediaSourceRow({
     </button>
   );
 
+  // Input de link (URL) opcional da media source. So salva/exibe, sem validacao.
+  const linkInput = (
+    <input
+      type="text"
+      value={ms.link}
+      onChange={(e) => onChangeLink(e.target.value)}
+      placeholder="Link (https://...)"
+      className={`${inputCls} text-xs`}
+    />
+  );
+
   // Inativa: input apagado/riscado + badge + justificativa + data, botao Reativar.
   if (hasId && !ms.active) {
     return (
@@ -2325,43 +2361,47 @@ function FormMediaSourceRow({
             )}
           </p>
         )}
+        {linkInput}
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <input
-        type="text"
-        value={ms.name}
-        onChange={(e) => onChangeName(e.target.value)}
-        placeholder="Ex: mobupps_int"
-        className={inputCls}
-      />
-      {hasId ? (
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          disabled={busy}
-          className="inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
-          title="Pausar media source"
-        >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Ban className="h-3.5 w-3.5" />
-          )}
-          Pausar
-        </button>
-      ) : (
-        <span
-          className="hidden text-[10px] text-muted sm:inline"
-          title="Salve a campanha pra poder pausar esta media source"
-        >
-          nova
-        </span>
-      )}
-      {removeBtn}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={ms.name}
+          onChange={(e) => onChangeName(e.target.value)}
+          placeholder="Ex: mobupps_int"
+          className={inputCls}
+        />
+        {hasId ? (
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            disabled={busy}
+            className="inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+            title="Pausar media source"
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Ban className="h-3.5 w-3.5" />
+            )}
+            Pausar
+          </button>
+        ) : (
+          <span
+            className="hidden text-[10px] text-muted sm:inline"
+            title="Salve a campanha pra poder pausar esta media source"
+          >
+            nova
+          </span>
+        )}
+        {removeBtn}
+      </div>
+      {linkInput}
       {confirmOpen && (
         <DeactivateMediaSourceModal
           name={ms.name}
