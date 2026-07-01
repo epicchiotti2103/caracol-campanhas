@@ -77,6 +77,30 @@ export interface CampanhaPublisherCap {
 }
 
 /**
+ * Item da LISTA autoritativa de caps de um publisher no payload (PATCH/POST),
+ * campo `caps`. Mesmo shape do CampanhaPublisherCap MAIS `evento_nome`:
+ * - `evento_nome` null  -> cap GERAL do publisher (coexiste com os por evento).
+ * - `evento_nome` preenchido -> cap daquele evento especifico (casado por nome).
+ * tipo='nenhum' encerra o cap correspondente. A lista deve conter TODOS os caps
+ * daquele publisher (geral + um por evento que tenha cap).
+ */
+export interface CampanhaPublisherCapInput extends CampanhaPublisherCap {
+  /** null/ausente = cap geral do publisher; preenchido = cap deste evento. */
+  evento_nome?: string | null;
+}
+
+/**
+ * Cap por evento de um publisher (read-only, vindo do GET detalhe em
+ * `CampanhaPublisher.caps_por_evento`). Casa com um evento do "PO por evento"
+ * pelo `evento_nome`. `cap` = vigente (ou null); `caps_historico` = vigencias.
+ */
+export interface CampanhaPublisherCapPorEvento {
+  evento_nome: string;
+  cap?: CampanhaPublisherCap | null;
+  caps_historico?: CampanhaCapHistorico[];
+}
+
+/**
  * Cap de eventos VIGENTE de um EVENTO da campanha (analogo ao cap de publisher).
  * Shape aceito pelo backend (EventoCapInput): tipo, unidade, valor,
  * vigencia_inicio + `reason` (motivo da renegociacao, so no PATCH). Diferente do
@@ -150,10 +174,13 @@ export interface CampanhaPublisher {
   // Historico de renegociacoes de payout por evento (mesmo shape do fechamento).
   // Ausente/vazio = nenhuma renegociacao. Ordenado por changed_at ASC.
   renegociacoes?: CampanhaPublisherRenegociacao[];
-  // Cap de eventos vigente (tipo nenhum/mensal/diario). Ausente = sem cap.
+  // Cap GERAL de eventos vigente (tipo nenhum/mensal/diario). Ausente = sem cap.
   cap?: CampanhaPublisherCap | null;
-  // Serie de vigencias do cap (read-only). Ausente/[] = nunca houve cap.
+  // Serie de vigencias do cap GERAL (read-only). Ausente/[] = nunca houve cap.
   caps_historico?: CampanhaCapHistorico[];
+  // Caps POR EVENTO (read-only). Casa com os eventos do "PO por evento" pelo
+  // evento_nome. Coexiste com o cap geral. Ausente/[] = nenhum cap por evento.
+  caps_por_evento?: CampanhaPublisherCapPorEvento[];
   ordem?: number;
 }
 

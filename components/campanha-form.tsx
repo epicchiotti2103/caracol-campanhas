@@ -36,7 +36,7 @@ import type {
   CampanhaEventoCap,
   CampanhaMMP,
   CampanhaPublisher,
-  CampanhaPublisherCap,
+  CampanhaPublisherCapInput,
   CampanhaStatus,
   CampanhaTipo,
   Moeda,
@@ -107,9 +107,13 @@ interface AppRow {
 }
 
 // PO por evento dentro de um publisher: keyado por evento_nome (string).
+// Cada evento tem um cap OPCIONAL proprio (mesmo CapRow do cap geral) — cap por
+// (publisher, evento). Coexiste com o cap geral do publisher.
 interface PublisherPayoutRow {
   evento_nome: string;
   payout: string; // mascara PT-BR
+  cap: CapRow;
+  caps_historico: CampanhaCapHistorico[]; // read-only, vinda do backend
 }
 
 // Media source dentro de um publisher no form. Guarda o objeto completo pra
@@ -251,14 +255,34 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
           deactivated_registered_at: ms?.deactivated_registered_at ?? null
         }))
       : [emptyMediaSourceRow()];
+  // Caps por evento (read-only do backend), casados por evento_nome. Monta um
+  // mapa nome -> { cap, historico } pra pre-carregar o cap de cada payout.
+  const capsPorEvento = new Map<
+    string,
+    { cap: CapRow; caps_historico: CampanhaCapHistorico[] }
+  >();
+  for (const c of p.caps_por_evento ?? []) {
+    const nome = (c?.evento_nome ?? "").trim();
+    if (!nome) continue;
+    capsPorEvento.set(nome, {
+      cap: capToRow(c?.cap),
+      caps_historico: Array.isArray(c?.caps_historico) ? c.caps_historico : []
+    });
+  }
   return {
     nome: p.nome ?? "",
     supplier_id: p.supplier_id ?? null,
     media_sources: msRows,
-    payouts: (p.payouts ?? []).map((po) => ({
-      evento_nome: po.evento_nome ?? "",
-      payout: po.payout != null ? formatNumberPtBr(po.payout) : ""
-    })),
+    payouts: (p.payouts ?? []).map((po) => {
+      const nome = po.evento_nome ?? "";
+      const evCap = capsPorEvento.get(nome.trim());
+      return {
+        evento_nome: nome,
+        payout: po.payout != null ? formatNumberPtBr(po.payout) : "",
+        cap: evCap?.cap ?? emptyCapRow(),
+        caps_historico: evCap?.caps_historico ?? []
+      };
+    }),
     moeda: p.moeda === "BRL" ? "BRL" : "USD",
     cap: capToRow(p.cap),
     caps_historico: Array.isArray(p.caps_historico) ? p.caps_historico : []
@@ -493,21 +517,23 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
   useEffect(() => {
     setPublishers((prev) =>
       prev.map((pub) => {
-        const byNome = new Map(
-          pub.payouts.map((po) => [po.evento_nome, po.payout])
+        // Mantem o objeto inteiro do payout (payout + cap + historico) por nome,
+        // reusando a mesma referencia quando o evento continua existindo. Evento
+        // renomeado/removido vira novo (cap vazio) — defensivo, nao quebra.
+        const byNome = new Map(pub.payouts.map((po) => [po.evento_nome, po]));
+        const next: PublisherPayoutRow[] = eventoNomes.map(
+          (nome) =>
+            byNome.get(nome) ?? {
+              evento_nome: nome,
+              payout: "",
+              cap: emptyCapRow(),
+              caps_historico: []
+            }
         );
-        const next: PublisherPayoutRow[] = eventoNomes.map((nome) => ({
-          evento_nome: nome,
-          payout: byNome.get(nome) ?? ""
-        }));
-        // Evita re-render se nada mudou (mesma sequencia de nomes + payouts).
+        // Evita re-render se nada mudou (mesma sequencia, mesmas referencias).
         const same =
           next.length === pub.payouts.length &&
-          next.every(
-            (po, i) =>
-              po.evento_nome === pub.payouts[i]?.evento_nome &&
-              po.payout === pub.payouts[i]?.payout
-          );
+          next.every((po, i) => po === pub.payouts[i]);
         return same ? pub : { ...pub, payouts: next };
       })
     );
@@ -566,8 +592,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         nome: "",
         supplier_id: null,
         media_sources: [emptyMediaSourceRow()],
-        // Ja inicia com 1 linha de payout por evento atual (vazias).
-        payouts: eventoNomes.map((nome) => ({ evento_nome: nome, payout: "" })),
+        // Ja inicia com 1 linha de payout por evento atual (vazias, sem cap).
+        payouts: eventoNomes.map((nome) => ({
+          evento_nome: nome,
+          payout: "",
+          cap: emptyCapRow(),
+          caps_historico: []
+        })),
         // Default USD em publisher novo (padrao do backend).
         moeda: "USD",
         cap: emptyCapRow(),
@@ -655,7 +686,26 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       )
     );
 
-  // cap de eventos dentro de um publisher
+  // cap por evento dentro de um publisher (cap de um item do "PO por evento")
+  const updatePublisherPayoutCap = (
+    pubIdx: number,
+    poIdx: number,
+    patch: Partial<CapRow>
+  ) =>
+    setPublishers((prev) =>
+      prev.map((pub, i) =>
+        i === pubIdx
+          ? {
+              ...pub,
+              payouts: pub.payouts.map((po, j) =>
+                j === poIdx ? { ...po, cap: { ...po.cap, ...patch } } : po
+              )
+            }
+          : pub
+      )
+    );
+
+  // cap GERAL de eventos dentro de um publisher
   const updatePublisherCap = (pubIdx: number, patch: Partial<CapRow>) =>
     setPublishers((prev) =>
       prev.map((pub, i) =>
@@ -829,12 +879,74 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       media_sources: string[];
       payouts: { evento_nome: string; payout: number | null }[];
       moeda: Moeda;
-      cap: CampanhaPublisherCap;
+      // Lista autoritativa de caps do publisher: geral (evento_nome null) + um
+      // item por evento que tenha cap (evento_nome preenchido).
+      caps: CampanhaPublisherCapInput[];
       ordem: number;
     }[] = [];
-    // Publishers cujo cap MUDOU de valor numa campanha que ja tinha cap vigente
-    // -> precisam de data efetiva (renegociacao). Coletamos pra pedir a data.
+    // Caps (geral OU por evento) que MUDARAM de valor numa campanha que ja tinha
+    // cap vigente -> precisam de data efetiva (renegociacao). O label descreve
+    // o alvo ("Publisher X" ou "Publisher X · evento Y") pro modal.
     const capsRenegociados: string[] = [];
+
+    // Constroi um item de cap (geral se eventoNome=null, ou por evento) a partir
+    // de um CapRow. Retorna null quando nao ha nada a enviar (tipo=nenhum e sem
+    // cap previo), "ERR" quando invalido (ja setou setError), ou o payload.
+    const buildCapInput = (
+      capRow: CapRow,
+      eventoNome: string | null,
+      label: string
+    ): CampanhaPublisherCapInput | null | "ERR" => {
+      if (capRow.tipo === "nenhum") {
+        // So envia 'nenhum' pra ENCERRAR um cap que existia antes; caso contrario
+        // omite (nada a fazer). evento_nome preserva o alvo.
+        if (capRow.initial == null) return null;
+        return {
+          tipo: "nenhum",
+          unidade: "eventos",
+          valor: null,
+          vigencia_inicio: null,
+          vigencia_fim: null,
+          evento_nome: eventoNome
+        };
+      }
+      const rawValor = capRow.valor.trim();
+      const valorNum = rawValor ? parseNumberPtBr(rawValor) : NaN;
+      if (!rawValor || Number.isNaN(valorNum) || valorNum < 0) {
+        setError(`${label}: informe um valor de cap valido (ou tipo Nenhum).`);
+        return "ERR";
+      }
+      if (!capRow.vigencia_inicio) {
+        setError(`${label}: informe a data de inicio da vigencia do cap.`);
+        return "ERR";
+      }
+      if (capRow.vigencia_fim && capRow.vigencia_fim < capRow.vigencia_inicio) {
+        setError(`${label}: fim da vigencia do cap antes do inicio.`);
+        return "ERR";
+      }
+      const payload: CampanhaPublisherCapInput = {
+        tipo: capRow.tipo,
+        unidade: capRow.unidade,
+        valor: valorNum,
+        vigencia_inicio: capRow.vigencia_inicio,
+        vigencia_fim: capRow.vigencia_fim || null,
+        evento_nome: eventoNome
+      };
+      // Renegociacao: ja existia cap vigente (initial) e valor/tipo/unidade
+      // mudou -> precisa de data efetiva. Mudanca de vigencia pura nao conta.
+      const prev = capRow.initial;
+      const changedMaterial =
+        prev != null &&
+        (prev.tipo !== payload.tipo ||
+          prev.unidade !== payload.unidade ||
+          (prev.valor ?? null) !== (payload.valor ?? null));
+      if (changedMaterial) {
+        capsRenegociados.push(label);
+        // data_efetiva preenchida depois (modal); marca como pendente.
+        (payload as any).__needsEfetiva = true;
+      }
+      return payload;
+    };
     for (let i = 0; i < publishers.length; i++) {
       const pub = publishers[i];
       const supplierId = pub.supplier_id || null;
@@ -845,7 +957,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       // Pula publishers totalmente vazios (sem fornecedor, sem nome, sem ms,
       // sem payout, sem cap).
       const hasPayout = pub.payouts.some((po) => po.payout.trim());
-      const hasCap = pub.cap.tipo !== "nenhum";
+      const hasCap =
+        pub.cap.tipo !== "nenhum" ||
+        pub.payouts.some((po) => po.cap.tipo !== "nenhum");
       if (
         !supplierId &&
         !nomeTrim &&
@@ -881,61 +995,27 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         cleanPayouts.push({ evento_nome: evNome, payout: payoutVal });
       }
 
-      // ---- Cap de eventos ----
-      const capRow = pub.cap;
-      let capPayload: CampanhaPublisherCap;
-      if (capRow.tipo === "nenhum") {
-        capPayload = {
-          tipo: "nenhum",
-          unidade: "eventos",
-          valor: null,
-          vigencia_inicio: null,
-          vigencia_fim: null
-        };
-      } else {
-        const rawValor = capRow.valor.trim();
-        const valorNum = rawValor ? parseNumberPtBr(rawValor) : NaN;
-        if (!rawValor || Number.isNaN(valorNum) || valorNum < 0) {
-          setError(
-            `Publisher "${nomeTrim}": informe um valor de cap valido (ou tipo Nenhum).`
-          );
-          return;
-        }
-        if (!capRow.vigencia_inicio) {
-          setError(
-            `Publisher "${nomeTrim}": informe a data de inicio da vigencia do cap.`
-          );
-          return;
-        }
-        if (
-          capRow.vigencia_fim &&
-          capRow.vigencia_fim < capRow.vigencia_inicio
-        ) {
-          setError(
-            `Publisher "${nomeTrim}": fim da vigencia do cap antes do inicio.`
-          );
-          return;
-        }
-        capPayload = {
-          tipo: capRow.tipo,
-          unidade: capRow.unidade,
-          valor: valorNum,
-          vigencia_inicio: capRow.vigencia_inicio,
-          vigencia_fim: capRow.vigencia_fim || null
-        };
-        // Renegociacao: ja existia cap vigente (initial) e o valor/tipo/unidade
-        // mudou -> precisa de data efetiva. Mudanca de vigencia pura nao conta.
-        const prev = capRow.initial;
-        const changedMaterial =
-          prev != null &&
-          (prev.tipo !== capPayload.tipo ||
-            prev.unidade !== capPayload.unidade ||
-            (prev.valor ?? null) !== (capPayload.valor ?? null));
-        if (changedMaterial) {
-          capsRenegociados.push(nomeTrim);
-          // data_efetiva preenchida depois (modal); marca como pendente.
-          (capPayload as any).__needsEfetiva = true;
-        }
+      // ---- Caps (geral + por evento) ----
+      // Lista autoritativa: cap GERAL (evento_nome null) + um item por evento
+      // que tenha cap. buildCapInput valida e marca renegociacao (data efetiva).
+      const caps: CampanhaPublisherCapInput[] = [];
+      const generalCap = buildCapInput(
+        pub.cap,
+        null,
+        `Publisher "${nomeTrim}"`
+      );
+      if (generalCap === "ERR") return;
+      if (generalCap) caps.push(generalCap);
+      for (const po of pub.payouts) {
+        const evNome = po.evento_nome.trim();
+        if (!evNome) continue;
+        const evCap = buildCapInput(
+          po.cap,
+          evNome,
+          `Publisher "${nomeTrim}" · evento "${evNome}"`
+        );
+        if (evCap === "ERR") return;
+        if (evCap) caps.push(evCap);
       }
 
       cleanPublishers.push({
@@ -944,7 +1024,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         media_sources: cleanMs,
         payouts: cleanPayouts,
         moeda: pub.moeda === "BRL" ? "BRL" : "USD",
-        cap: capPayload,
+        caps,
         ordem: i
       });
     }
@@ -963,11 +1043,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       setEventoCapRenegEventos(eventoCapsRenegociados);
       return;
     }
-    // Aplica a data efetiva nos caps de publisher renegociados.
+    // Aplica a data efetiva nos caps (geral E por evento) renegociados.
     for (const cp of cleanPublishers) {
-      if ((cp.cap as any).__needsEfetiva) {
-        cp.cap.data_efetiva = capEffectiveDate || todayIso();
-        delete (cp.cap as any).__needsEfetiva;
+      for (const c of cp.caps) {
+        if ((c as any).__needsEfetiva) {
+          c.data_efetiva = capEffectiveDate || todayIso();
+          delete (c as any).__needsEfetiva;
+        }
       }
     }
     // Aplica o motivo nos caps de evento renegociados.
@@ -1699,12 +1781,12 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                 </div>
               </div>
 
-              {/* PO por evento */}
+              {/* PO por evento (cada evento com cap opcional proprio) */}
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">
                   PO por evento
                   <span className="ml-1 text-xs font-normal text-muted">
-                    (repasse em {moedaShort(pub.moeda)})
+                    (repasse em {moedaShort(pub.moeda)} + cap opcional por evento)
                   </span>
                 </label>
                 {eventoNomes.length === 0 ? (
@@ -1717,18 +1799,30 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                     {pub.payouts.map((po, poIdx) => (
                       <div
                         key={po.evento_nome}
-                        className="grid grid-cols-[1fr,160px] items-center gap-2"
+                        className="space-y-2 rounded-lg border border-border/60 bg-background p-2"
                       >
-                        <span className="truncate text-sm text-foreground">
-                          {po.evento_nome}
-                        </span>
-                        <PtBrCurrencyInput
-                          value={po.payout}
-                          onChange={(v) =>
-                            updatePublisherPayout(pubIdx, poIdx, v)
+                        <div className="grid grid-cols-[1fr,160px] items-center gap-2">
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {po.evento_nome}
+                          </span>
+                          <PtBrCurrencyInput
+                            value={po.payout}
+                            onChange={(v) =>
+                              updatePublisherPayout(pubIdx, poIdx, v)
+                            }
+                            prefix={moedaShort(pub.moeda)}
+                            aria-label={`Payout ${po.evento_nome}`}
+                          />
+                        </div>
+                        {/* Cap deste (publisher, evento) — opcional. Coexiste
+                            com o cap geral do publisher abaixo. */}
+                        <CapBlock
+                          cap={po.cap}
+                          history={po.caps_historico}
+                          onChange={(patch) =>
+                            updatePublisherPayoutCap(pubIdx, poIdx, patch)
                           }
-                          prefix={moedaShort(pub.moeda)}
-                          aria-label={`Payout ${po.evento_nome}`}
+                          title={`Cap do evento "${po.evento_nome}"`}
                         />
                       </div>
                     ))}
@@ -1736,11 +1830,12 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                 )}
               </div>
 
-              {/* Cap de eventos */}
+              {/* Cap GERAL do publisher (coexiste com os caps por evento acima) */}
               <CapBlock
                 cap={pub.cap}
                 history={pub.caps_historico}
                 onChange={(patch) => updatePublisherCap(pubIdx, patch)}
+                title="Cap geral do publisher"
               />
             </div>
           ))}
@@ -2010,8 +2105,8 @@ function CapEffectiveDateModal({
         <p className="mb-4 text-sm text-muted">
           O cap mudou para{" "}
           {publishers.length === 1
-            ? `o publisher "${publishers[0]}"`
-            : `${publishers.length} publishers`}
+            ? publishers[0]
+            : `${publishers.length} caps`}
           . Informe a partir de que dia o novo cap vale — vira uma nova vigencia
           (o anterior fica no historico).
         </p>
