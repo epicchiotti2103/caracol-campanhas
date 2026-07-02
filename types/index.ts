@@ -149,8 +149,11 @@ export interface CampanhaPublisherRenegociacao {
 export interface CampanhaMediaSource {
   id: string;
   name: string;
-  // Link (URL) opcional associado a esta media source. So pra salvar/exibir.
-  link?: string | null;
+  // Links (URLs) opcionais associados a esta media source. So pra salvar/exibir.
+  link_ios?: string | null;
+  link_android?: string | null;
+  link_view_ios?: string | null;
+  link_view_android?: string | null;
   active: boolean;
   deactivated_reason: string | null;
   deactivated_at: string | null;

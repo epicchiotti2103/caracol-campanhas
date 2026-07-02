@@ -122,7 +122,11 @@ interface PublisherPayoutRow {
 interface MediaSourceRow {
   id: string | null;
   name: string;
-  link: string; // URL opcional (texto livre no form)
+  // URLs opcionais (texto livre no form). So salva/exibe.
+  link_ios: string;
+  link_android: string;
+  link_view_ios: string;
+  link_view_android: string;
   active: boolean;
   deactivated_reason: string | null;
   deactivated_at: string | null;
@@ -205,7 +209,10 @@ function emptyMediaSourceRow(): MediaSourceRow {
   return {
     id: null,
     name: "",
-    link: "",
+    link_ios: "",
+    link_android: "",
+    link_view_ios: "",
+    link_view_android: "",
     active: true,
     deactivated_reason: null,
     deactivated_at: null,
@@ -251,7 +258,10 @@ function publisherToRow(p: CampanhaPublisher): PublisherRow {
       ? p.media_sources.map((ms) => ({
           id: ms?.id ?? null,
           name: ms?.name ?? "",
-          link: ms?.link ?? "",
+          link_ios: ms?.link_ios ?? "",
+          link_android: ms?.link_android ?? "",
+          link_view_ios: ms?.link_view_ios ?? "",
+          link_view_android: ms?.link_view_android ?? "",
           active: ms?.active !== false,
           deactivated_reason: ms?.deactivated_reason ?? null,
           deactivated_at: ms?.deactivated_at ?? null,
@@ -629,9 +639,16 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           : pub
       )
     );
+  // Atualiza um dos 4 campos de link da media source (link_ios, link_android,
+  // link_view_ios, link_view_android).
   const updatePublisherMediaSourceLink = (
     pubIdx: number,
     msIdx: number,
+    field:
+      | "link_ios"
+      | "link_android"
+      | "link_view_ios"
+      | "link_view_android",
     value: string
   ) =>
     setPublishers((prev) =>
@@ -640,7 +657,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           ? {
               ...pub,
               media_sources: pub.media_sources.map((ms, j) =>
-                j === msIdx ? { ...ms, link: value } : ms
+                j === msIdx ? { ...ms, [field]: value } : ms
               )
             }
           : pub
@@ -896,7 +913,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     const cleanPublishers: {
       nome: string;
       supplier_id: string | null;
-      media_sources: { name: string; link: string | null }[];
+      media_sources: {
+        name: string;
+        link_ios: string | null;
+        link_android: string | null;
+        link_view_ios: string | null;
+        link_view_android: string | null;
+      }[];
       payouts: { evento_nome: string; payout: number | null }[];
       moeda: Moeda;
       // Lista autoritativa de caps do publisher: geral (evento_nome null) + um
@@ -972,7 +995,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       const supplierId = pub.supplier_id || null;
       const nomeTrim = pub.nome.trim();
       const cleanMs = pub.media_sources
-        .map((ms) => ({ name: ms.name.trim(), link: ms.link.trim() || null }))
+        .map((ms) => ({
+          name: ms.name.trim(),
+          link_ios: ms.link_ios.trim() || null,
+          link_android: ms.link_android.trim() || null,
+          link_view_ios: ms.link_view_ios.trim() || null,
+          link_view_android: ms.link_view_android.trim() || null
+        }))
         .filter((ms) => ms.name);
       // Pula publishers totalmente vazios (sem fornecedor, sem nome, sem ms,
       // sem payout, sem cap).
@@ -1782,8 +1811,13 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                       onChangeName={(value) =>
                         updatePublisherMediaSourceName(pubIdx, msIdx, value)
                       }
-                      onChangeLink={(value) =>
-                        updatePublisherMediaSourceLink(pubIdx, msIdx, value)
+                      onChangeLink={(field, value) =>
+                        updatePublisherMediaSourceLink(
+                          pubIdx,
+                          msIdx,
+                          field,
+                          value
+                        )
                       }
                       onRemove={() =>
                         removePublisherMediaSource(pubIdx, msIdx)
@@ -2239,7 +2273,10 @@ function FormMediaSourceRow({
   ms: MediaSourceRow;
   canRemove: boolean;
   onChangeName: (value: string) => void;
-  onChangeLink: (value: string) => void;
+  onChangeLink: (
+    field: "link_ios" | "link_android" | "link_view_ios" | "link_view_android",
+    value: string
+  ) => void;
   onRemove: () => void;
   onToggled: (patch: Partial<MediaSourceRow>) => void;
 }) {
@@ -2305,15 +2342,42 @@ function FormMediaSourceRow({
     </button>
   );
 
-  // Input de link (URL) opcional da media source. So salva/exibe, sem validacao.
-  const linkInput = (
-    <input
-      type="text"
-      value={ms.link}
-      onChange={(e) => onChangeLink(e.target.value)}
-      placeholder="Link (https://...)"
-      className={`${inputCls} text-xs`}
-    />
+  // Os 4 links (URLs) opcionais da media source. So salva/exibe, sem validacao.
+  // link_ios/link_android sao os principais; os 2 de visualizacao ficam
+  // agrupados e menores como "opcionais".
+  const linkField = (
+    field:
+      | "link_ios"
+      | "link_android"
+      | "link_view_ios"
+      | "link_view_android",
+    label: string
+  ) => (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-[11px] font-medium text-muted">{label}</span>
+      <input
+        type="text"
+        value={ms[field]}
+        onChange={(e) => onChangeLink(field, e.target.value)}
+        placeholder="https://..."
+        className={`${inputCls} text-xs`}
+      />
+    </label>
+  );
+  const linkInputs = (
+    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border bg-surface/40 p-2.5">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {linkField("link_ios", "Link iOS")}
+        {linkField("link_android", "Link Android")}
+      </div>
+      <div className="grid grid-cols-1 gap-2 border-t border-border/60 pt-2 sm:grid-cols-2">
+        {linkField("link_view_ios", "Link visualização iOS (se houver)")}
+        {linkField(
+          "link_view_android",
+          "Link visualização Android (se houver)"
+        )}
+      </div>
+    </div>
   );
 
   // Inativa: input apagado/riscado + badge + justificativa + data, botao Reativar.
@@ -2361,7 +2425,7 @@ function FormMediaSourceRow({
             )}
           </p>
         )}
-        {linkInput}
+        {linkInputs}
       </div>
     );
   }
@@ -2401,7 +2465,7 @@ function FormMediaSourceRow({
         )}
         {removeBtn}
       </div>
-      {linkInput}
+      {linkInputs}
       {confirmOpen && (
         <DeactivateMediaSourceModal
           name={ms.name}
