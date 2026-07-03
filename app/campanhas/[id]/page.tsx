@@ -1188,6 +1188,7 @@ function PublishersTable({
             <span className="rounded-md border border-border bg-surface px-2 py-0.5 text-xs font-medium text-muted">
               {moedaLabel(pubMoeda)}
             </span>
+            <PublisherPauseAllButton pub={pub} onReload={onReload} />
           </div>
 
           <div>
@@ -1413,5 +1414,90 @@ function MediaSourceRow({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Botao "Pausar todos" no cabecalho do publisher: pausa de uma vez todas as
+ * media sources ATIVAS via endpoint batch. Reusa o mesmo ReasonDateModal do
+ * pause individual (motivo + data efetiva). So aparece quando o publisher tem
+ * id e pelo menos uma media source ativa.
+ */
+function PublisherPauseAllButton({
+  pub,
+  onReload
+}: {
+  pub: CampanhaPublisher;
+  onReload: () => Promise<void> | void;
+}) {
+  const toast = useToast();
+  const can = useCan();
+  const canEdit = can("campanhas.edit");
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const activeCount = (pub.media_sources || []).filter((m) => m.active).length;
+  if (!canEdit || !pub.id || activeCount === 0) return null;
+
+  const pauseAll = async (reason: string, deactivatedAt: string) => {
+    setBusy(true);
+    try {
+      const res = await apiFetch(
+        `/campanhas/publishers/${pub.id}/media-sources/pause-all`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason, deactivated_at: deactivatedAt })
+        }
+      );
+      const paused = (res as any)?.paused ?? activeCount;
+      toast.success(
+        `${paused} media source${paused === 1 ? "" : "s"} pausada${
+          paused === 1 ? "" : "s"
+        }.`
+      );
+      setOpen(false);
+      await onReload();
+    } catch (err: any) {
+      toast.error(err?.message || "Falha ao pausar media sources.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={busy}
+        className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+        title="Pausar todas as media sources ativas deste publisher"
+      >
+        {busy ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Ban className="h-3 w-3" />
+        )}
+        Pausar todos ({activeCount})
+      </button>
+      {open && (
+        <ReasonDateModal
+          title="Pausar todas as media sources"
+          description={
+            <>
+              Pausar as {activeCount} media source
+              {activeCount === 1 ? "" : "s"} ativa
+              {activeCount === 1 ? "" : "s"} de{" "}
+              <span className="font-semibold text-foreground">{pub.nome}</span>.
+            </>
+          }
+          confirmLabel="Pausar todos"
+          confirmVariant="danger"
+          submitting={busy}
+          onConfirm={pauseAll}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
