@@ -624,6 +624,47 @@ export interface FechamentoSummary {
   ll_caracol_usd?: number;
 }
 
+// ---- Agregado de pagamento por publisher no mes ----
+// Soma o `spend_final` (payout ja calculado pelo fechamento — inclui cap,
+// exclusao por pausa, excedente aprovado) de TODAS as campanhas fechadas do mes,
+// agrupado por publisher. Serve pra emissao de NF do publisher (total do mes).
+// NUNCA aplica a partilha Wave (1/3) — o publisher recebe o spend_final cheio.
+// Backend (slug `fechamento-publishers-agregado`, subagente `tracker`):
+// GET /api/v1/campanhas/fechamento/summary/publishers?month=YYYY-MM
+// (path sob /summary/ pra nao colidir com /fechamento/{fechamento_id}).
+
+/** Uma parcela do agregado: quanto um publisher tem a receber de UMA campanha. */
+export interface PublisherPagamentoItem {
+  campanha_id: string;
+  campanha_codigo?: string | null;
+  campanha_nome: string;
+  fechamento_id: string | null;
+  /** Fechamento travado (NF emitida/fechado de vez) vs so persistido. */
+  locked: boolean;
+  moeda: Moeda;
+  spend_final: number;
+}
+
+/** Um publisher agregado no mes (soma de todas as campanhas fechadas). */
+export interface PublisherPagamento {
+  /** FK do cadastro de fornecedor quando resolvido; null pra publisher sem match. */
+  supplier_id: string | null;
+  publisher_name: string;
+  /** Total a pagar por moeda (nunca somar entre moedas). Ex: {USD: 1234.5}. */
+  totals_by_moeda: Partial<Record<Moeda, number>>;
+  campanhas_count: number;
+  /** Drill-down: de quais campanhas veio cada parcela. */
+  items: PublisherPagamentoItem[];
+}
+
+/** Response do GET /campanhas/fechamento/summary/publishers?month=YYYY-MM. */
+export interface PublishersPagamentoResponse {
+  month: string;
+  publishers: PublisherPagamento[];
+  /** Soma geral por moeda (todos os publishers). */
+  grand_total_by_moeda: Partial<Record<Moeda, number>>;
+}
+
 // ---------- Brutos arquivados (AppsFlyer) ----------
 
 /** Tipo de relatorio bruto arquivado no Supabase Storage pelo api_af. */

@@ -12,14 +12,16 @@ import {
   ShieldCheck,
   User,
   LineChart,
-  KeyRound
+  KeyRound,
+  Wallet
 } from "lucide-react";
 
 type LinkDef = { href: string; label: string; icon: any };
 
 const LINKS: LinkDef[] = [
   { href: "/campanhas", label: "Campanhas", icon: Megaphone },
-  { href: "/desempenho", label: "Desempenho", icon: LineChart }
+  { href: "/desempenho", label: "Desempenho", icon: LineChart },
+  { href: "/pagamentos", label: "Pagamentos", icon: Wallet }
 ];
 
 const ADMIN_LINKS: LinkDef[] = [
