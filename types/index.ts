@@ -665,6 +665,46 @@ export interface PublishersPagamentoResponse {
   grand_total_by_moeda: Partial<Record<Moeda, number>>;
 }
 
+// ---- Lista plana (publisher × media source × payout) — tela /media-sources ----
+// Denormalizacao GLOBAL das campanhas de um mes: uma linha por combinacao
+// (campanha × publisher × media source × evento/payout). Serve pra exportar
+// pro Excel (PROCV) — o Elio sentia falta do fluxo do Google Sheets. O backend
+// faz LEFT JOIN: publisher sem media source (ou sem payout) ainda vira 1 linha
+// com a celula vazia. NUNCA aplica partilha Wave — payout e o do cadastro.
+// Backend (slug `campanhas-flat-list`, subagente `tracker`):
+// GET /api/v1/campanhas/summary/flat-list?month=YYYY-MM (path sob /summary/ pra
+// NAO colidir com /campanhas/{id}). Escopo POR MES (cada mes = snapshot).
+
+/** Uma linha da lista plana. Todos os campos alem dos de campanha podem ser null. */
+export interface CampanhaFlatRow {
+  campanha_id: string;
+  campanha_codigo?: string | null;
+  campanha_nome: string;
+  campanha_status?: CampanhaStatus | string | null;
+  mes_referencia?: string | null;
+  publisher_id?: string | null;
+  publisher_nome: string;
+  /** FK do cadastro de fornecedor (suppliers); null pra publisher sem match. */
+  supplier_id?: string | null;
+  /** Moeda do payout desse publisher (BRL/USD). */
+  moeda?: Moeda | string | null;
+  /** Nome (PID) da media source; null quando o publisher nao tem media source. */
+  media_source?: string | null;
+  media_source_ativa?: boolean | null;
+  /** Evento do payout; null quando o publisher nao tem PO cadastrado. */
+  evento_nome?: string | null;
+  payout?: number | null;
+  /** Cap GERAL vigente do publisher (informativo). */
+  cap_tipo?: CampanhaCapTipo | string | null;
+  cap_unidade?: CampanhaCapUnidade | string | null;
+  cap_valor?: number | null;
+}
+
+export interface CampanhaFlatListResponse {
+  month: string;
+  rows: CampanhaFlatRow[];
+}
+
 // ---------- Brutos arquivados (AppsFlyer) ----------
 
 /** Tipo de relatorio bruto arquivado no Supabase Storage pelo api_af. */
