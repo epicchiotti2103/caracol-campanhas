@@ -51,6 +51,7 @@ import type {
   FechamentoPublisherCadastrado,
   FechamentoUpsertPayload,
   Moeda,
+  PagamentoBaseItem,
   Supplier
 } from "@/types";
 
@@ -103,6 +104,15 @@ interface PublisherRow {
 
   // ---- Cap POR EVENTO (display only — NAO afeta pagamento) ----
   caps_evento: CapEvento[];
+
+  // ---- Pagamento sugerido (Σ qty x PO) — tudo OPCIONAL no backend ----
+  // Memorial da conta por evento (tooltip). [] quando o backend nao manda.
+  pagamento_base: PagamentoBaseItem[];
+  // Publisher com mais de um evento e so parte com PO -> valor incompleto.
+  po_parcial: boolean;
+  // O backend devolveu spend_final = null (nao deu pra calcular: sem PO).
+  // Usado SO pro placeholder "sem PO" — row nova adicionada a mao nao ganha.
+  pagamento_sem_po: boolean;
 }
 
 function hasCap(p: PublisherRow): boolean {
@@ -141,8 +151,27 @@ function toRow(
     realizado_qty_bruto: p.realizado_qty_bruto ?? null,
     qty_excluida_pausa: p.qty_excluida_pausa ?? null,
     spend_excluida_pausa: p.spend_excluida_pausa ?? null,
-    caps_evento: Array.isArray(p.caps_evento) ? p.caps_evento : []
+    caps_evento: Array.isArray(p.caps_evento) ? p.caps_evento : [],
+    pagamento_base: Array.isArray(p.pagamento_base) ? p.pagamento_base : [],
+    po_parcial: p.po_parcial === true,
+    pagamento_sem_po: p.spend_final == null
   };
+}
+
+// Memorial de calculo do pagamento sugerido, em uma linha por evento.
+// Ex: "af_purchase: 150 x 1,50 = 225,00". Tolera campos nulos (renderiza "—").
+function pagamentoBaseTitle(
+  base: PagamentoBaseItem[],
+  moedaPub: Moeda
+): string | undefined {
+  if (!base || base.length === 0) return undefined;
+  const num = (v: number | null | undefined, dec = 2) =>
+    v == null || !Number.isFinite(v) ? "—" : blurFormatNumberPtBr(String(v), dec);
+  const linhas = base.map((b) => {
+    const nome = b.evento_nome || "evento";
+    return `${nome}: ${num(b.qty, 0)} x ${num(b.payout)} = ${num(b.subtotal)}`;
+  });
+  return `Pagamento sugerido (${moedaShort(moedaPub)}):\n${linhas.join("\n")}`;
 }
 
 // Ordena os publishers em ordem alfabetica (case-insensitive, locale pt-BR).
@@ -464,6 +493,24 @@ export function CampanhaFechamentoModal({
     [publishers, moedaRecebimento]
   );
 
+  // Equivalente do pagamento na moeda da CAMPANHA (display puro — nunca entra
+  // no payload). So faz sentido quando a moeda do publisher difere da moeda de
+  // recebimento E ha cambio informado. O `fx_rate` e definido como "US$ -> moeda
+  // do fechamento", entao so convertemos nessa direcao: publisher em US$ com
+  // campanha em BRL. Fora disso (ou sem cambio valido) NAO mostra nada — sem
+  // fallback, sem chute de cambio.
+  const pagamentoEquivalente = useCallback(
+    (input: string, moedaPub: Moeda): number | null => {
+      if (moedaPub === moedaRecebimento) return null;
+      if (moedaPub !== "USD" || moedaRecebimento !== "BRL") return null;
+      if (fxRateNumber == null || !(fxRateNumber > 0)) return null;
+      const v = parseNumberPtBr(input);
+      if (!Number.isFinite(v)) return null;
+      return v * fxRateNumber;
+    },
+    [moedaRecebimento, fxRateNumber]
+  );
+
   // Custo dos publishers convertido pra moeda do fechamento (previa client-side;
   // o backend recalcula no save). Publisher na moeda do fechamento entra direto;
   // em moeda estrangeira (US$) multiplica pelo cambio (se informado).
@@ -631,6 +678,9 @@ export function CampanhaFechamentoModal({
         qty_excluida_pausa: null,
         spend_excluida_pausa: null,
         caps_evento: [],
+        pagamento_base: [],
+        po_parcial: false,
+        pagamento_sem_po: false,
         ...partial
       }
     ]);
@@ -695,11 +745,16 @@ export function CampanhaFechamentoModal({
     for (const p of publishers) {
       const name = p.publisher_name.trim();
       if (!name) continue;
-      const spend = parseNumberPtBr(p.spend_final_input);
-      if (!Number.isFinite(spend) || spend < 0) {
+      // Campo VAZIO (backend nao conseguiu sugerir: publisher sem PO) nao trava
+      // o save — vai como 0, igual ja acontece nas somas exibidas no modal.
+      // So valor preenchido e invalido/negativo bloqueia.
+      const vazio = p.spend_final_input.trim() === "";
+      const parsed = parseNumberPtBr(p.spend_final_input);
+      if (!vazio && (!Number.isFinite(parsed) || parsed < 0)) {
         setError(`Spend final invalido no publisher "${name}".`);
         return;
       }
+      const spend = vazio ? 0 : parsed;
       publishersPayload.push({
         publisher_name: name,
         platform: p.platform || null,
@@ -1346,7 +1401,13 @@ export function CampanhaFechamentoModal({
                               {p.spend_real_display}
                             </td>
                             <td className="px-3 py-2 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
+                              <div
+                                className="flex items-center justify-end gap-1.5"
+                                title={pagamentoBaseTitle(
+                                  p.pagamento_base,
+                                  p.moeda
+                                )}
+                              >
                                 <span className="text-xs text-muted">
                                   {moedaShort(p.moeda)}
                                 </span>
@@ -1369,9 +1430,34 @@ export function CampanhaFechamentoModal({
                                     })
                                   }
                                   disabled={readOnly}
-                                  placeholder="0,00"
+                                  placeholder={
+                                    p.pagamento_sem_po ? "sem PO" : "0,00"
+                                  }
                                   className="w-28 rounded border border-border bg-background px-2 py-1 text-right font-mono text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-60"
                                 />
+                                {p.po_parcial && (
+                                  <span
+                                    className="flex-shrink-0 rounded bg-amber-500/10 px-1 py-0.5 text-[11px] font-medium text-amber-300"
+                                    title="PO parcial: o publisher tem mais de um evento e so parte tem PO cadastrado — o valor sugerido esta incompleto."
+                                  >
+                                    PO parcial
+                                  </span>
+                                )}
+                                {(() => {
+                                  const eq = pagamentoEquivalente(
+                                    p.spend_final_input,
+                                    p.moeda
+                                  );
+                                  if (eq == null) return null;
+                                  return (
+                                    <span
+                                      className="flex-shrink-0 whitespace-nowrap text-[11px] text-muted"
+                                      title={`Equivalente em ${moedaRecebimento} pelo cambio do fechamento (x ${fxRate || "—"}). Referencia — nao e salvo.`}
+                                    >
+                                      ~{formatCurrency(eq, moedaRecebimento)}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </td>
                             <td className="px-3 py-2 text-center">

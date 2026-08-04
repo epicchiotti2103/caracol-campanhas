@@ -433,7 +433,10 @@ export interface FechamentoPublisher {
   id?: string | null;
   publisher_name: string;
   platform?: string | null;
-  spend_final: number;
+  // Pagamento ao publisher. `null` = o backend NAO conseguiu sugerir um valor
+  // (publisher sem PO cadastrado) — o modal renderiza o input VAZIO. Zero e um
+  // valor legitimo de pagamento e nao pode ser confundido com "nao calculado".
+  spend_final: number | null;
   installs_or_conversions?: number | null;
   p360_event_rate?: number | null;
   notes?: string | null;
@@ -477,6 +480,23 @@ export interface FechamentoPublisher {
   // Cada item = um evento com cap. Informativo: mostra realizado/valido/excedente
   // em quantidade de eventos. Ausente/[] quando o publisher nao tem cap por evento.
   caps_evento?: CapEvento[];
+
+  // ---- Memorial do pagamento sugerido (Σ qty x PO) — OPCIONAL ----
+  // O backend passa a sugerir o pagamento como Σ(qty_evento x PO) na moeda do
+  // publisher. `pagamento_base` detalha a conta por evento (tooltip no modal).
+  // TODOS OPCIONAIS: o front funciona igual quando ausentes.
+  pagamento_base?: PagamentoBaseItem[] | null;
+  // true = o publisher tem mais de um evento e so parte tem PO cadastrado, ou
+  // seja, o valor sugerido esta INCOMPLETO (badge de atencao na row).
+  po_parcial?: boolean | null;
+}
+
+/** Uma linha do memorial de calculo do pagamento sugerido (por evento). */
+export interface PagamentoBaseItem {
+  evento_nome: string;
+  qty?: number | null;
+  payout?: number | null;
+  subtotal?: number | null;
 }
 
 /**
