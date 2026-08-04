@@ -10,12 +10,20 @@
 // 2) User edita cliente, spend_final, publishers e salva (POST upsert).
 // 3) Locked: read-only. Botao "Destravar" volta pra editavel.
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import {
   AlertCircle,
   Loader2,
   Lock,
   Plus,
+  Search,
   Trash2,
   Unlock,
   X
@@ -42,7 +50,8 @@ import type {
   FechamentoPublisher,
   FechamentoPublisherCadastrado,
   FechamentoUpsertPayload,
-  Moeda
+  Moeda,
+  Supplier
 } from "@/types";
 
 interface Props {
@@ -60,6 +69,9 @@ interface Props {
 // Linha editavel — espelha FechamentoPublisher mas com spend_final como string
 // pra preservar o digitado pelo user (mascara PT-BR).
 interface PublisherRow {
+  // Chave local estavel (key do React + alvo do scrollIntoView na adicao).
+  // Nunca vai pro payload de save.
+  local_key: string;
   id?: string | null;
   publisher_name: string;
   platform: string; // sempre "consolidado" no MVP — coluna nao exibida
@@ -97,8 +109,13 @@ function hasCap(p: PublisherRow): boolean {
   return p.cap_tipo === "mensal" || p.cap_tipo === "diario";
 }
 
-function toRow(p: FechamentoPublisher, moeda: string | null | undefined): PublisherRow {
+function toRow(
+  p: FechamentoPublisher,
+  moeda: string | null | undefined,
+  key: string
+): PublisherRow {
   return {
+    local_key: key,
     id: p.id ?? null,
     publisher_name: p.publisher_name || "",
     platform: p.platform || "consolidado",
@@ -217,7 +234,11 @@ export function CampanhaFechamentoModal({
         f.fx_rate != null ? blurFormatNumberPtBr(String(f.fx_rate), 4) : ""
       );
       setPublishers(
-        sortRows((f.publishers || []).map((p) => toRow(p, f.moeda || moeda)))
+        sortRows(
+          (f.publishers || []).map((p, i) =>
+            toRow(p, f.moeda || moeda, p.id ?? `loaded-${i}`)
+          )
+        )
       );
       setPublishersCadastrados(f.publishers_cadastrados || []);
     } catch (err: any) {
@@ -262,6 +283,87 @@ export function CampanhaFechamentoModal({
       cancelled = true;
     };
   }, [debouncedSearch]);
+
+  // ----- Catalogo de publishers (suppliers is_publisher) -----
+  // Alimenta o seletor do botao "Adicionar publisher". Carregado UMA vez no
+  // mount do modal; tolera falha (cai em []). Mesmo padrao do campanha-form.
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliersLoading, setSuppliersLoading] = useState(true);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const pickerWrapRef = useRef<HTMLDivElement>(null);
+  const pickerSearchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiFetch(
+          "/suppliers?is_publisher=true&active=true"
+        );
+        if (!alive) return;
+        const items: Supplier[] = Array.isArray(res?.items) ? res.items : [];
+        items.sort((a, b) =>
+          (a.name || "").localeCompare(b.name || "", "pt-BR", {
+            sensitivity: "base"
+          })
+        );
+        setSuppliers(items);
+      } catch {
+        if (alive) setSuppliers([]);
+      } finally {
+        if (alive) setSuppliersLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const filteredSuppliers = useMemo(() => {
+    const q = pickerQuery.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) =>
+      (s.name || "").toLowerCase().includes(q)
+    );
+  }, [suppliers, pickerQuery]);
+
+  // Fecha o popover clicando fora.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onDown(e: MouseEvent) {
+      if (
+        pickerWrapRef.current &&
+        !pickerWrapRef.current.contains(e.target as Node)
+      ) {
+        setPickerOpen(false);
+        setPickerQuery("");
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pickerOpen]);
+
+  // Foco na busca ao abrir.
+  useEffect(() => {
+    if (pickerOpen) pickerSearchRef.current?.focus();
+  }, [pickerOpen]);
+
+  // ----- Scroll na row recem-adicionada -----
+  // A row nova entra no FIM da tabela, que frequentemente esta fora da
+  // viewport do modal — sem scroll o user acha que o botao nao funcionou.
+  const [lastAddedKey, setLastAddedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lastAddedKey) return;
+    const el = document.querySelector(
+      `[data-publisher-row="${lastAddedKey}"]`
+    );
+    if (el) {
+      el.scrollIntoView({ block: "nearest" });
+      setLastAddedKey(null);
+    }
+  }, [lastAddedKey, publishers]);
 
   // ----- Helpers -----
   const isLocked = fechamento?.is_locked || fechamento?.locked || false;
@@ -494,10 +596,17 @@ export function CampanhaFechamentoModal({
       prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
     );
   };
-  const addPub = () =>
+  const newRowSeq = useRef(0);
+  const nextLocalKey = () => `new-${++newRowSeq.current}`;
+
+  // Cria uma row vazia no fim da tabela e devolve a local_key dela (usada
+  // pelo scrollIntoView). `partial` sobrepoe os defaults (ex: nome do supplier).
+  const addPubRow = (partial: Partial<PublisherRow>): string => {
+    const key = nextLocalKey();
     setPublishers((prev) => [
       ...prev,
       {
+        local_key: key,
         id: null,
         publisher_name: "",
         platform: "consolidado",
@@ -521,9 +630,33 @@ export function CampanhaFechamentoModal({
         realizado_qty_bruto: null,
         qty_excluida_pausa: null,
         spend_excluida_pausa: null,
-        caps_evento: []
+        caps_evento: [],
+        ...partial
       }
     ]);
+    return key;
+  };
+
+  // Selecao do catalogo: adiciona com o nome CANONICO do supplier. Moeda: se o
+  // nome (lower/trim) bater num publisher cadastrado desta campanha, herda a
+  // moeda do cadastrado; senao default USD (comportamento antigo).
+  const addPubFromSupplier = (s: Supplier) => {
+    const name = (s.name || "").trim();
+    const cadastrado = poAcordadoByPublisher.get(name.toLowerCase());
+    const moedaRow: Moeda = cadastrado?.moeda === "BRL" ? "BRL" : "USD";
+    setLastAddedKey(addPubRow({ publisher_name: name, moeda: moedaRow }));
+    setPickerOpen(false);
+    setPickerQuery("");
+  };
+
+  // Escape hatch do seletor: row vazia de texto livre (publisher ainda nao
+  // catalogado). Mesmo comportamento do "Adicionar publisher" antigo.
+  const addPub = () => {
+    setLastAddedKey(addPubRow({}));
+    setPickerOpen(false);
+    setPickerQuery("");
+  };
+
   const removePub = (idx: number) =>
     setPublishers((prev) => prev.filter((_, i) => i !== idx));
 
@@ -672,7 +805,9 @@ export function CampanhaFechamentoModal({
       );
       setPublishers(
         sortRows(
-          (saved.publishers || []).map((p) => toRow(p, saved.moeda || moeda))
+          (saved.publishers || []).map((p, i) =>
+            toRow(p, saved.moeda || moeda, p.id ?? `loaded-${i}`)
+          )
         )
       );
       setPublishersCadastrados(saved.publishers_cadastrados || []);
@@ -1018,14 +1153,81 @@ export function CampanhaFechamentoModal({
                     Publishers
                   </h3>
                   {!readOnly && (
-                    <button
-                      type="button"
-                      onClick={addPub}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Adicionar publisher
-                    </button>
+                    <div className="relative" ref={pickerWrapRef}>
+                      <button
+                        type="button"
+                        onClick={() => setPickerOpen((v) => !v)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-primary/40 hover:text-foreground"
+                        aria-haspopup="listbox"
+                        aria-expanded={pickerOpen}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Adicionar publisher
+                      </button>
+                      {pickerOpen && (
+                        <div className="absolute right-0 z-30 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                          <div className="border-b border-border p-2">
+                            <div className="relative">
+                              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+                              <input
+                                ref={pickerSearchRef}
+                                type="text"
+                                value={pickerQuery}
+                                onChange={(e) => setPickerQuery(e.target.value)}
+                                placeholder="Buscar publisher..."
+                                className={inputCls + " pl-8"}
+                                aria-label="Buscar publisher no catalogo"
+                              />
+                            </div>
+                          </div>
+                          <ul className="max-h-56 overflow-auto py-1" role="listbox">
+                            {suppliersLoading && (
+                              <li className="px-3 py-2 text-xs text-muted">
+                                Carregando catalogo...
+                              </li>
+                            )}
+                            {!suppliersLoading && filteredSuppliers.length === 0 && (
+                              <li className="px-3 py-2 text-xs text-muted">
+                                Nenhum publisher encontrado.
+                              </li>
+                            )}
+                            {filteredSuppliers.map((s) => {
+                              const nomeKey = (s.name || "").trim().toLowerCase();
+                              const daCampanha =
+                                poAcordadoByPublisher.has(nomeKey);
+                              return (
+                                <li key={s.id}>
+                                  <button
+                                    type="button"
+                                    onClick={() => addPubFromSupplier(s)}
+                                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-background"
+                                    role="option"
+                                    aria-selected={false}
+                                  >
+                                    <span className="truncate">{s.name}</span>
+                                    {daCampanha && (
+                                      <span className="flex-shrink-0 text-[11px] text-muted">
+                                        da campanha
+                                      </span>
+                                    )}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          <div className="border-t border-border p-1">
+                            <button
+                              type="button"
+                              onClick={addPub}
+                              className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-sm text-muted transition-colors hover:bg-background hover:text-foreground"
+                            >
+                              <Plus className="h-3.5 w-3.5 flex-shrink-0" />
+                              Campo livre (fora do catalogo)
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -1083,8 +1285,9 @@ export function CampanhaFechamentoModal({
                           const showCapEvento = p.caps_evento.length > 0;
                           const expanded = expandedCaps.has(idx);
                           return (
-                          <Fragment key={p.id || `new-${idx}`}>
+                          <Fragment key={p.local_key}>
                           <tr
+                            data-publisher-row={p.local_key}
                             className={
                               !showCap && !showCapEvento && idx < publishers.length - 1
                                 ? "border-b border-border"
