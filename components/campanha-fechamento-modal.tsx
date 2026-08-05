@@ -115,28 +115,6 @@ interface PublisherRow {
   pagamento_sem_po: boolean;
 }
 
-// Cambio default (US$ -> moeda da campanha) quando o fechamento nao tem
-// `fx_rate` salvo — stub novo OU fechamento antigo gravado com null. Com valor
-// salvo, o salvo ganha. Decisao do user (04/08).
-const FX_RATE_DEFAULT = 5.5;
-const FX_RATE_DEFAULT_INPUT = blurFormatNumberPtBr(String(FX_RATE_DEFAULT), 4);
-
-// Valor inicial do campo Cambio. Com `fx_rate` salvo, usa o salvo. Sem valor
-// salvo aplica o default 5,5 — MENOS em fechamento de partilha Wave, onde o
-// cambio alimenta a conta (custo/lucro/margem) que o backend ja calculou e
-// gravou: injetar 5,5 ali faria a previa (inclusive de fechamento TRAVADO)
-// divergir do que esta persistido. Wave sem cambio continua vazio, como antes.
-function initialFxRate(f: {
-  fx_rate?: number | null;
-  imposto_pct?: number | null;
-  is_revenue_share?: boolean;
-}): string {
-  if (f.fx_rate != null) return blurFormatNumberPtBr(String(f.fx_rate), 4);
-  // Espelha o `_revenue_share_active` do backend (parceiro OU imposto gravado).
-  const wave = f.is_revenue_share === true || f.imposto_pct != null;
-  return wave ? "" : FX_RATE_DEFAULT_INPUT;
-}
-
 function hasCap(p: PublisherRow): boolean {
   return p.cap_tipo === "mensal" || p.cap_tipo === "diario";
 }
@@ -281,7 +259,9 @@ export function CampanhaFechamentoModal({
       setImpostoPct(
         f.imposto_pct != null ? blurFormatNumberPtBr(String(f.imposto_pct), 2) : ""
       );
-      setFxRate(initialFxRate(f));
+      setFxRate(
+        f.fx_rate != null ? blurFormatNumberPtBr(String(f.fx_rate), 4) : ""
+      );
       setPublishers(
         sortRows(
           (f.publishers || []).map((p, i) =>
@@ -511,24 +491,6 @@ export function CampanhaFechamentoModal({
   const hasForeignPublisher = useMemo(
     () => publishers.some((p) => p.moeda !== moedaRecebimento),
     [publishers, moedaRecebimento]
-  );
-
-  // Equivalente do pagamento na moeda da CAMPANHA (display puro — nunca entra
-  // no payload). So faz sentido quando a moeda do publisher difere da moeda de
-  // recebimento E ha cambio informado. O `fx_rate` e definido como "US$ -> moeda
-  // do fechamento", entao so convertemos nessa direcao: publisher em US$ com
-  // campanha em BRL. Fora disso (ou sem cambio valido) NAO mostra nada — sem
-  // fallback, sem chute de cambio.
-  const pagamentoEquivalente = useCallback(
-    (input: string, moedaPub: Moeda): number | null => {
-      if (moedaPub === moedaRecebimento) return null;
-      if (moedaPub !== "USD" || moedaRecebimento !== "BRL") return null;
-      if (fxRateNumber == null || !(fxRateNumber > 0)) return null;
-      const v = parseNumberPtBr(input);
-      if (!Number.isFinite(v)) return null;
-      return v * fxRateNumber;
-    },
-    [moedaRecebimento, fxRateNumber]
   );
 
   // Custo dos publishers convertido pra moeda do fechamento (previa client-side;
@@ -791,13 +753,9 @@ export function CampanhaFechamentoModal({
       client_id: clientId,
       spend_final: spendFinalNumber,
       notes: notes.trim() || null,
-      // imposto_pct e EXCLUSIVO da partilha Wave — o backend deriva
-      // `is_revenue_share` de `imposto_pct is not None`, entao mandar imposto
-      // em fechamento normal transformaria ele em Wave. NAO mexer.
+      // Partilha Wave: so envia imposto%/cambio quando o cliente e parceiro.
       imposto_pct: isRevenueShare ? impostoPctNumber : null,
-      // Cambio vale pra TODO fechamento (nao so Wave): e o que converte o
-      // pagamento de publisher em moeda estrangeira pra moeda da campanha.
-      fx_rate: fxRateNumber,
+      fx_rate: isRevenueShare ? fxRateNumber : null,
       publishers: publishersPayload
     };
 
@@ -877,7 +835,11 @@ export function CampanhaFechamentoModal({
           ? blurFormatNumberPtBr(String(saved.imposto_pct), 2)
           : ""
       );
-      setFxRate(initialFxRate(saved));
+      setFxRate(
+        saved.fx_rate != null
+          ? blurFormatNumberPtBr(String(saved.fx_rate), 4)
+          : ""
+      );
       setPublishers(
         sortRows(
           (saved.publishers || []).map((p, i) =>
@@ -1052,49 +1014,19 @@ export function CampanhaFechamentoModal({
                     </div>
                   </div>
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-foreground">
-                        Moeda
-                      </label>
-                      <input
-                        type="text"
-                        value={fechamento?.moeda || moeda || "BRL"}
-                        disabled
-                        className={inputCls}
-                      />
-                      <p className="mt-1 text-xs text-muted">
-                        Moeda da campanha (read-only).
-                      </p>
-                    </div>
-
-                    {/* Cambio — vale pra TODO fechamento (nao so partilha Wave):
-                        converte o pagamento de publisher em moeda estrangeira
-                        pra moeda da campanha. Default 5,5 quando nao ha salvo. */}
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-foreground">
-                        Cambio (US$ → {moedaPrefix})
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={fxRate}
-                        onChange={(e) =>
-                          setFxRate(sanitizeNumberInput(e.target.value))
-                        }
-                        onBlur={(e) =>
-                          setFxRate(blurFormatNumberPtBr(e.target.value, 4))
-                        }
-                        disabled={readOnly}
-                        placeholder={FX_RATE_DEFAULT_INPUT}
-                        className={inputCls}
-                      />
-                      <p className="mt-1 text-xs text-muted">
-                        {hasForeignPublisher
-                          ? "Ha publisher em moeda diferente — usado pra mostrar o equivalente ao lado do pagamento e converter o custo."
-                          : "Usado pra converter pagamento de publisher em moeda diferente."}
-                      </p>
-                    </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-foreground">
+                      Moeda
+                    </label>
+                    <input
+                      type="text"
+                      value={fechamento?.moeda || moeda || "BRL"}
+                      disabled
+                      className={inputCls}
+                    />
+                    <p className="mt-1 text-xs text-muted">
+                      Moeda da campanha (read-only).
+                    </p>
                   </div>
                 </div>
 
@@ -1135,15 +1067,28 @@ export function CampanhaFechamentoModal({
                         </div>
                       </div>
 
-                      {/* O cambio usado aqui e o MESMO campo la de cima (agora
-                          fora deste bloco) — nao ha campo duplicado. */}
-                      <div className="flex items-end">
-                        <p className="text-xs text-violet-200/70">
-                          Cambio usado na conversao do custo:{" "}
-                          <span className="font-mono text-violet-200">
-                            {fxRate || "—"}
-                          </span>{" "}
-                          (campo "Cambio (US$ → {moedaPrefix})" acima).
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-foreground">
+                          Cambio (US$ → {moedaPrefix})
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={fxRate}
+                          onChange={(e) =>
+                            setFxRate(sanitizeNumberInput(e.target.value))
+                          }
+                          onBlur={(e) =>
+                            setFxRate(blurFormatNumberPtBr(e.target.value, 4))
+                          }
+                          disabled={readOnly}
+                          placeholder="0,0000"
+                          className={inputCls}
+                        />
+                        <p className="mt-1 text-xs text-muted">
+                          {hasForeignPublisher
+                            ? "Ha publisher em moeda diferente — usado pra converter o custo."
+                            : "Usado pra converter custo de publisher em moeda diferente."}
                         </p>
                       </div>
                     </div>
@@ -1480,21 +1425,6 @@ export function CampanhaFechamentoModal({
                                     PO parcial
                                   </span>
                                 )}
-                                {(() => {
-                                  const eq = pagamentoEquivalente(
-                                    p.spend_final_input,
-                                    p.moeda
-                                  );
-                                  if (eq == null) return null;
-                                  return (
-                                    <span
-                                      className="flex-shrink-0 whitespace-nowrap text-[11px] text-muted"
-                                      title={`Equivalente em ${moedaRecebimento} pelo cambio do fechamento (x ${fxRate || "—"}). Referencia — nao e salvo.`}
-                                    >
-                                      ~{formatCurrency(eq, moedaRecebimento)}
-                                    </span>
-                                  );
-                                })()}
                               </div>
                             </td>
                             <td className="px-3 py-2 text-center">
