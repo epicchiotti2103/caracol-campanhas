@@ -115,6 +115,12 @@ interface PublisherRow {
   pagamento_sem_po: boolean;
 }
 
+// Cambio default (US$ -> moeda da campanha) quando o fechamento nao tem
+// `fx_rate` salvo — stub novo OU fechamento antigo gravado com null. Com valor
+// salvo, o salvo ganha. Decisao do user (04/08).
+const FX_RATE_DEFAULT = 5.5;
+const FX_RATE_DEFAULT_INPUT = blurFormatNumberPtBr(String(FX_RATE_DEFAULT), 4);
+
 function hasCap(p: PublisherRow): boolean {
   return p.cap_tipo === "mensal" || p.cap_tipo === "diario";
 }
@@ -260,7 +266,9 @@ export function CampanhaFechamentoModal({
         f.imposto_pct != null ? blurFormatNumberPtBr(String(f.imposto_pct), 2) : ""
       );
       setFxRate(
-        f.fx_rate != null ? blurFormatNumberPtBr(String(f.fx_rate), 4) : ""
+        f.fx_rate != null
+          ? blurFormatNumberPtBr(String(f.fx_rate), 4)
+          : FX_RATE_DEFAULT_INPUT
       );
       setPublishers(
         sortRows(
@@ -771,9 +779,13 @@ export function CampanhaFechamentoModal({
       client_id: clientId,
       spend_final: spendFinalNumber,
       notes: notes.trim() || null,
-      // Partilha Wave: so envia imposto%/cambio quando o cliente e parceiro.
+      // imposto_pct e EXCLUSIVO da partilha Wave — o backend deriva
+      // `is_revenue_share` de `imposto_pct is not None`, entao mandar imposto
+      // em fechamento normal transformaria ele em Wave. NAO mexer.
       imposto_pct: isRevenueShare ? impostoPctNumber : null,
-      fx_rate: isRevenueShare ? fxRateNumber : null,
+      // Cambio vale pra TODO fechamento (nao so Wave): e o que converte o
+      // pagamento de publisher em moeda estrangeira pra moeda da campanha.
+      fx_rate: fxRateNumber,
       publishers: publishersPayload
     };
 
@@ -856,7 +868,7 @@ export function CampanhaFechamentoModal({
       setFxRate(
         saved.fx_rate != null
           ? blurFormatNumberPtBr(String(saved.fx_rate), 4)
-          : ""
+          : FX_RATE_DEFAULT_INPUT
       );
       setPublishers(
         sortRows(
@@ -1032,19 +1044,49 @@ export function CampanhaFechamentoModal({
                     </div>
                   </div>
 
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-foreground">
-                      Moeda
-                    </label>
-                    <input
-                      type="text"
-                      value={fechamento?.moeda || moeda || "BRL"}
-                      disabled
-                      className={inputCls}
-                    />
-                    <p className="mt-1 text-xs text-muted">
-                      Moeda da campanha (read-only).
-                    </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-foreground">
+                        Moeda
+                      </label>
+                      <input
+                        type="text"
+                        value={fechamento?.moeda || moeda || "BRL"}
+                        disabled
+                        className={inputCls}
+                      />
+                      <p className="mt-1 text-xs text-muted">
+                        Moeda da campanha (read-only).
+                      </p>
+                    </div>
+
+                    {/* Cambio — vale pra TODO fechamento (nao so partilha Wave):
+                        converte o pagamento de publisher em moeda estrangeira
+                        pra moeda da campanha. Default 5,5 quando nao ha salvo. */}
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-foreground">
+                        Cambio (US$ → {moedaPrefix})
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={fxRate}
+                        onChange={(e) =>
+                          setFxRate(sanitizeNumberInput(e.target.value))
+                        }
+                        onBlur={(e) =>
+                          setFxRate(blurFormatNumberPtBr(e.target.value, 4))
+                        }
+                        disabled={readOnly}
+                        placeholder={FX_RATE_DEFAULT_INPUT}
+                        className={inputCls}
+                      />
+                      <p className="mt-1 text-xs text-muted">
+                        {hasForeignPublisher
+                          ? "Ha publisher em moeda diferente — usado pra mostrar o equivalente ao lado do pagamento e converter o custo."
+                          : "Usado pra converter pagamento de publisher em moeda diferente."}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -1085,28 +1127,15 @@ export function CampanhaFechamentoModal({
                         </div>
                       </div>
 
-                      <div>
-                        <label className="mb-1.5 block text-sm font-medium text-foreground">
-                          Cambio (US$ → {moedaPrefix})
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={fxRate}
-                          onChange={(e) =>
-                            setFxRate(sanitizeNumberInput(e.target.value))
-                          }
-                          onBlur={(e) =>
-                            setFxRate(blurFormatNumberPtBr(e.target.value, 4))
-                          }
-                          disabled={readOnly}
-                          placeholder="0,0000"
-                          className={inputCls}
-                        />
-                        <p className="mt-1 text-xs text-muted">
-                          {hasForeignPublisher
-                            ? "Ha publisher em moeda diferente — usado pra converter o custo."
-                            : "Usado pra converter custo de publisher em moeda diferente."}
+                      {/* O cambio usado aqui e o MESMO campo la de cima (agora
+                          fora deste bloco) — nao ha campo duplicado. */}
+                      <div className="flex items-end">
+                        <p className="text-xs text-violet-200/70">
+                          Cambio usado na conversao do custo:{" "}
+                          <span className="font-mono text-violet-200">
+                            {fxRate || "—"}
+                          </span>{" "}
+                          (campo "Cambio (US$ → {moedaPrefix})" acima).
                         </p>
                       </div>
                     </div>
