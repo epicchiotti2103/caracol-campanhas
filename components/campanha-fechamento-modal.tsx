@@ -121,6 +121,22 @@ interface PublisherRow {
 const FX_RATE_DEFAULT = 5.5;
 const FX_RATE_DEFAULT_INPUT = blurFormatNumberPtBr(String(FX_RATE_DEFAULT), 4);
 
+// Valor inicial do campo Cambio. Com `fx_rate` salvo, usa o salvo. Sem valor
+// salvo aplica o default 5,5 — MENOS em fechamento de partilha Wave, onde o
+// cambio alimenta a conta (custo/lucro/margem) que o backend ja calculou e
+// gravou: injetar 5,5 ali faria a previa (inclusive de fechamento TRAVADO)
+// divergir do que esta persistido. Wave sem cambio continua vazio, como antes.
+function initialFxRate(f: {
+  fx_rate?: number | null;
+  imposto_pct?: number | null;
+  is_revenue_share?: boolean;
+}): string {
+  if (f.fx_rate != null) return blurFormatNumberPtBr(String(f.fx_rate), 4);
+  // Espelha o `_revenue_share_active` do backend (parceiro OU imposto gravado).
+  const wave = f.is_revenue_share === true || f.imposto_pct != null;
+  return wave ? "" : FX_RATE_DEFAULT_INPUT;
+}
+
 function hasCap(p: PublisherRow): boolean {
   return p.cap_tipo === "mensal" || p.cap_tipo === "diario";
 }
@@ -265,11 +281,7 @@ export function CampanhaFechamentoModal({
       setImpostoPct(
         f.imposto_pct != null ? blurFormatNumberPtBr(String(f.imposto_pct), 2) : ""
       );
-      setFxRate(
-        f.fx_rate != null
-          ? blurFormatNumberPtBr(String(f.fx_rate), 4)
-          : FX_RATE_DEFAULT_INPUT
-      );
+      setFxRate(initialFxRate(f));
       setPublishers(
         sortRows(
           (f.publishers || []).map((p, i) =>
@@ -865,11 +877,7 @@ export function CampanhaFechamentoModal({
           ? blurFormatNumberPtBr(String(saved.imposto_pct), 2)
           : ""
       );
-      setFxRate(
-        saved.fx_rate != null
-          ? blurFormatNumberPtBr(String(saved.fx_rate), 4)
-          : FX_RATE_DEFAULT_INPUT
-      );
+      setFxRate(initialFxRate(saved));
       setPublishers(
         sortRows(
           (saved.publishers || []).map((p, i) =>
