@@ -823,7 +823,13 @@ export function CampanhaFechamentoModal({
       // Custo invoice: so em fechamento Wave, sempre em USD. Backend antigo
       // (pre-073) ignora o campo — por isso o input so aparece quando ele ja
       // devolve os campos novos, pra nao engolir valor digitado em silencio.
-      custo_invoice_usd: isRevenueShare ? custoInvoiceUsdNumber : null,
+      // Campo vazio vai como null (coluna e nullable, sem default) — nao como
+      // 0, senao o input recarrega "0,00" e some a diferenca entre "nao tem
+      // custo invoice" e "custo invoice zero".
+      custo_invoice_usd:
+        isRevenueShare && custoInvoiceUsd.trim() !== ""
+          ? custoInvoiceUsdNumber
+          : null,
       publishers: publishersPayload
     };
 
