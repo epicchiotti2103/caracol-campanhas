@@ -42,6 +42,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type {
   CampanhaCapTipo,
   CampanhaCapUnidade,
+  CampanhaMediaSource,
   CampanhaPublisherRenegociacao,
   CapBreakdownPeriodo,
   CapEvento,
@@ -1268,6 +1269,11 @@ export function CampanhaFechamentoModal({
                   )}
                 </div>
 
+                <PidsPausadosResumo
+                  cadastrados={publishersCadastrados}
+                  month={month}
+                />
+
                 {publishers.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-border bg-background p-6 text-center text-sm text-muted">
                     Nenhum publisher. Adicione manualmente se quiser detalhar o
@@ -2015,6 +2021,231 @@ function PausaExclusaoInfo({
   return null;
 }
 
+/**
+ * "YYYY-MM" LOCAL de um timestamp ISO. "" quando nulo/invalido.
+ * Data pura (YYYY-MM-DD) nao passa pelo `Date` — seria lida como UTC meia-noite
+ * e cairia no mes anterior em fuso negativo (Brasilia).
+ */
+function ymLocal(s: string | null | undefined): string {
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.slice(0, 7);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+type PidPausadoGrupo = "durante" | "antes" | "depois" | "sem_data";
+
+interface PidPausadoItem {
+  key: string;
+  publisher: string;
+  pid: string;
+  deactivated_at: string | null;
+  registered_at: string | null;
+  reason: string | null;
+}
+
+/**
+ * Resumo consolidado dos PIDs (media sources) pausados da campanha, no topo da
+ * secao de publishers. Puramente INFORMATIVO — quem exclui dias do calculo e a
+ * pausa da CAMPANHA (`status_windows`), nao a pausa de PID.
+ *
+ * Separa por quando a pausa caiu em relacao ao mes de referencia, porque muda a
+ * conferencia manual: pausado NO mes = numeros parciais (destaque ambar); ja
+ * pausado antes = nao rodou nada; sem data = dado faltando (nao pode sumir).
+ * O 4o grupo ("depois do mes") aparece so quando se abre um fechamento antigo
+ * de um PID pausado depois — rodou o mes inteiro, nao cabe nos outros dois.
+ */
+function PidsPausadosResumo({
+  cadastrados,
+  month
+}: {
+  cadastrados: FechamentoPublisherCadastrado[];
+  month: string;
+}) {
+  const grupos = useMemo(() => {
+    const out: Record<PidPausadoGrupo, PidPausadoItem[]> = {
+      durante: [],
+      antes: [],
+      depois: [],
+      sem_data: []
+    };
+    for (const pc of cadastrados || []) {
+      const publisher = (pc?.publisher_name || "").trim();
+      for (const ms of (pc?.media_sources || []) as CampanhaMediaSource[]) {
+        if (!ms || ms.active !== false) continue;
+        const item: PidPausadoItem = {
+          key: `${publisher}|${ms.id || ms.name}`,
+          publisher: publisher || "—",
+          pid: ms.name || "—",
+          deactivated_at: ms.deactivated_at || null,
+          registered_at: ms.deactivated_registered_at || null,
+          reason: ms.deactivated_reason || null
+        };
+        const ym = ymLocal(ms.deactivated_at);
+        if (!ym) out.sem_data.push(item);
+        else if (ym === month) out.durante.push(item);
+        else if (ym < month) out.antes.push(item);
+        else out.depois.push(item);
+      }
+    }
+    const byDateDesc = (a: PidPausadoItem, b: PidPausadoItem) =>
+      (b.deactivated_at || "").localeCompare(a.deactivated_at || "");
+    out.durante.sort(byDateDesc);
+    out.antes.sort(byDateDesc);
+    out.depois.sort(byDateDesc);
+    out.sem_data.sort(
+      (a, b) =>
+        a.publisher.localeCompare(b.publisher) || a.pid.localeCompare(b.pid)
+    );
+    return out;
+  }, [cadastrados, month]);
+
+  const total =
+    grupos.durante.length +
+    grupos.antes.length +
+    grupos.depois.length +
+    grupos.sem_data.length;
+
+  const [open, setOpen] = useState(() => total <= 10);
+
+  if (total === 0) return null;
+
+  const mesLabel = formatMesAnoLong(`${month}-01`) || month;
+
+  return (
+    <div className="rounded-lg border border-border bg-surface">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-left"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted" />
+        )}
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+          PIDs pausados
+        </span>
+        <span className="text-[11px] text-muted/70">({total})</span>
+        <span className="ml-auto flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider">
+          {grupos.durante.length > 0 && (
+            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
+              {grupos.durante.length} no mes
+            </span>
+          )}
+          {grupos.antes.length > 0 && (
+            <span className="rounded bg-background px-1.5 py-0.5 text-muted">
+              {grupos.antes.length} ja pausados
+            </span>
+          )}
+          {grupos.depois.length > 0 && (
+            <span className="rounded bg-background px-1.5 py-0.5 text-muted">
+              {grupos.depois.length} apos o mes
+            </span>
+          )}
+          {grupos.sem_data.length > 0 && (
+            <span className="rounded bg-muted/15 px-1.5 py-0.5 text-muted">
+              {grupos.sem_data.length} sem data
+            </span>
+          )}
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-2.5 border-t border-border px-3 py-2.5">
+          <PidsPausadosGrupo
+            label={`Pausado durante ${mesLabel}`}
+            hint="numeros parciais no mes"
+            badgeCls="bg-amber-500/10 text-amber-300"
+            itens={grupos.durante}
+          />
+          <PidsPausadosGrupo
+            label="Ja estava pausado"
+            hint="nao rodou no mes"
+            badgeCls="bg-background text-muted"
+            itens={grupos.antes}
+          />
+          <PidsPausadosGrupo
+            label="Pausado depois do mes"
+            hint="rodou o mes inteiro"
+            badgeCls="bg-background text-muted"
+            itens={grupos.depois}
+          />
+          <PidsPausadosGrupo
+            label="Sem data registrada"
+            hint="conferir manualmente"
+            badgeCls="bg-muted/15 text-muted"
+            itens={grupos.sem_data}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PidsPausadosGrupo({
+  label,
+  hint,
+  badgeCls,
+  itens
+}: {
+  label: string;
+  hint: string;
+  badgeCls: string;
+  itens: PidPausadoItem[];
+}) {
+  if (itens.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 flex flex-wrap items-center gap-1.5">
+        <span
+          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${badgeCls}`}
+        >
+          {label}
+        </span>
+        <span className="text-[10px] text-muted/70">
+          {itens.length} · {hint}
+        </span>
+      </div>
+      <ul className="space-y-0.5">
+        {itens.map((it) => (
+          <li
+            key={it.key}
+            className="flex flex-wrap items-baseline gap-x-1.5 text-[11px] leading-tight"
+            title={
+              it.registered_at
+                ? `Registrado em ${fmtDate(it.registered_at)}`
+                : undefined
+            }
+          >
+            <span className="text-foreground">{it.publisher}</span>
+            <span className="text-muted/50">·</span>
+            <span className="font-mono text-muted">{it.pid}</span>
+            <span className="text-muted/50">·</span>
+            {it.deactivated_at ? (
+              <span className="text-muted">{fmtDate(it.deactivated_at)}</span>
+            ) : (
+              <span className="rounded bg-muted/15 px-1 py-0.5 text-[10px] uppercase tracking-wider text-muted">
+                sem data
+              </span>
+            )}
+            {it.reason && (
+              <span
+                className="max-w-[260px] truncate text-muted/80"
+                title={it.reason}
+              >
+                — {it.reason}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Destaca as media sources INATIVAS de um publisher cadastrado no fechamento. */
 function InactiveMediaSources({
   cadastrado
@@ -2039,9 +2270,21 @@ function InactiveMediaSources({
           {ms.deactivated_reason && (
             <span className="text-muted">— {ms.deactivated_reason}</span>
           )}
-          {ms.deactivated_at && (
+          {ms.deactivated_at ? (
             <span className="text-muted">
               Pausado em {fmtDate(ms.deactivated_at)}
+              {ms.deactivated_registered_at && (
+                <span className="ml-1 text-[10px] text-muted/70">
+                  (registrado em {fmtDate(ms.deactivated_registered_at)})
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="text-muted">
+              Pausado —{" "}
+              <span className="rounded bg-muted/15 px-1 py-0.5 text-[10px] uppercase tracking-wider text-muted">
+                sem data
+              </span>
               {ms.deactivated_registered_at && (
                 <span className="ml-1 text-[10px] text-muted/70">
                   (registrado em {fmtDate(ms.deactivated_registered_at)})
