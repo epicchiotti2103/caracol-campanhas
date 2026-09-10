@@ -2022,13 +2022,31 @@ function PausaExclusaoInfo({
 }
 
 /**
- * "YYYY-MM" LOCAL de um timestamp ISO. "" quando nulo/invalido.
- * Data pura (YYYY-MM-DD) nao passa pelo `Date` — seria lida como UTC meia-noite
- * e cairia no mes anterior em fuso negativo (Brasilia).
+ * Formata um campo com semantica de DATA (nao de instante) como dd/mm/aaaa.
+ *
+ * `deactivated_at` e uma data que o user digita (`YYYY-MM-DD`), mas a coluna e
+ * `timestamptz`: o backend grava meia-noite e o Supabase devolve
+ * `2026-08-01T00:00:00+00:00`. Passar isso pelo `Date` em Brasilia (UTC-3) da
+ * 31/07 — um dia a menos, e mes errado quando cai no dia 1. Entao lemos os
+ * digitos da propria string quando ela comeca com uma data ISO.
+ *
+ * NAO use pra `deactivated_registered_at`/`changed_at` e afins: esses sao
+ * instantes de verdade e devem ser convertidos pro fuso local (`fmtDate`).
+ */
+function fmtDateOnly(s: string | null | undefined): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return fmtDate(s);
+}
+
+/**
+ * "YYYY-MM" de um campo com semantica de data. "" quando nulo/invalido.
+ * Mesma leitura do `fmtDateOnly` — data exibida e grupo nunca discordam.
  */
 function ymLocal(s: string | null | undefined): string {
   if (!s) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.slice(0, 7);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 7);
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -2225,7 +2243,7 @@ function PidsPausadosGrupo({
             <span className="font-mono text-muted">{it.pid}</span>
             <span className="text-muted/50">·</span>
             {it.deactivated_at ? (
-              <span className="text-muted">{fmtDate(it.deactivated_at)}</span>
+              <span className="text-muted">{fmtDateOnly(it.deactivated_at)}</span>
             ) : (
               <span className="rounded bg-muted/15 px-1 py-0.5 text-[10px] uppercase tracking-wider text-muted">
                 sem data
@@ -2272,7 +2290,7 @@ function InactiveMediaSources({
           )}
           {ms.deactivated_at ? (
             <span className="text-muted">
-              Pausado em {fmtDate(ms.deactivated_at)}
+              Pausado em {fmtDateOnly(ms.deactivated_at)}
               {ms.deactivated_registered_at && (
                 <span className="ml-1 text-[10px] text-muted/70">
                   (registrado em {fmtDate(ms.deactivated_registered_at)})
