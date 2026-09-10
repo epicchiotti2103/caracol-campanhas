@@ -213,6 +213,8 @@ export function CampanhaFechamentoModal({
   // So usados/exibidos quando o cliente e parceiro de partilha.
   const [impostoPct, setImpostoPct] = useState("");
   const [fxRate, setFxRate] = useState("");
+  // Custo invoice — SEMPRE em USD (mesmo em campanha BRL); o backend converte.
+  const [custoInvoiceUsd, setCustoInvoiceUsd] = useState("");
   const [publishers, setPublishers] = useState<PublisherRow[]>([]);
   // Linhas de cap com o breakdown expandido (por indice de publisher).
   const [expandedCaps, setExpandedCaps] = useState<Set<number>>(new Set());
@@ -262,6 +264,11 @@ export function CampanhaFechamentoModal({
       );
       setFxRate(
         f.fx_rate != null ? blurFormatNumberPtBr(String(f.fx_rate), 4) : ""
+      );
+      setCustoInvoiceUsd(
+        f.custo_invoice_usd != null
+          ? blurFormatNumberPtBr(String(f.custo_invoice_usd), 2)
+          : ""
       );
       setPublishers(
         sortRows(
@@ -511,17 +518,73 @@ export function CampanhaFechamentoModal({
     return total;
   }, [publishers, moedaRecebimento, fxRateNumber]);
 
+  // ----- Imposto s/ custo (10%) + custo invoice (backend >= migration 073) -----
+  // O backend so serializa esses campos depois do restart. Enquanto nao vier,
+  // a tela degrada pro comportamento antigo (sem linha de imposto, sem input).
+  const backendTemCustoInvoice = fechamento?.imposto_custo_pct !== undefined;
+
+  // Aliquota do imposto sobre o custo. NUNCA hardcodada aqui: quem decide a
+  // vigencia (mes_referencia >= 2026-07) e a partilha e o backend — o front so
+  // ecoa o percentual que veio. Fechamento nao-Wave nunca aplica.
+  const impostoCustoPct = useMemo(() => {
+    if (!isRevenueShare) return 0;
+    const p = fechamento?.imposto_custo_pct;
+    return typeof p === "number" && Number.isFinite(p) && p > 0 ? p : 0;
+  }, [isRevenueShare, fechamento]);
+
+  // O backend gate a aliquota tambem por partilha ATIVA. Num stub sem cliente,
+  // ele manda 0; se o user acabou de escolher o parceiro Wave, a previa fica
+  // sem a linha do imposto ate salvar. Avisamos em vez de chutar os 10%.
+  const impostoCustoPendente =
+    backendTemCustoInvoice &&
+    isRevenueShare &&
+    impostoCustoPct === 0 &&
+    fechamento?.is_revenue_share !== true;
+
+  const custoInvoiceUsdNumber = useMemo(() => {
+    const n = parseNumberPtBr(custoInvoiceUsd);
+    return Number.isFinite(n) ? n : 0;
+  }, [custoInvoiceUsd]);
+
+  // Custo invoice convertido pra moeda do fechamento — mesma semantica do
+  // `_custo_publisher_convertido` do backend: moeda igual soma direto; moeda
+  // diferente multiplica pelo cambio; sem cambio, soma cru (fallback).
+  const custoInvoiceConvertidoLive = useMemo(() => {
+    if (moedaRecebimento === "USD") return custoInvoiceUsdNumber;
+    return fxRateNumber != null
+      ? custoInvoiceUsdNumber * fxRateNumber
+      : custoInvoiceUsdNumber;
+  }, [custoInvoiceUsdNumber, moedaRecebimento, fxRateNumber]);
+
   // Cadeia de calculo do Wave (previa com a MESMA formula do backend; o backend
   // recalcula no save). NF faturada = spend_final do cliente.
+  // custo_total = custo publisher + imposto s/ custo + custo invoice convertido.
   const waveCalc = useMemo(() => {
+    const impostoCusto = (custoPublisherLive * impostoCustoPct) / 100;
+    const custoTotal =
+      custoPublisherLive + impostoCusto + custoInvoiceConvertidoLive;
     const imposto = (spendFinalNumber * impostoPctNumber) / 100;
-    const lucroBruto = spendFinalNumber - custoPublisherLive; // NF − custo
-    const lucroLiquido = lucroBruto - imposto; // − imposto
+    const lucroBruto = spendFinalNumber - custoTotal; // NF − custo total
+    const lucroLiquido = spendFinalNumber - imposto - custoTotal;
     const margemCaracol = lucroLiquido / 3; // fatia da Caracol (1/3)
-    // A receber de Wave = reembolso do custo + margem Caracol.
-    const aReceberWave = custoPublisherLive + margemCaracol;
-    return { imposto, lucroBruto, lucroLiquido, margemCaracol, aReceberWave };
-  }, [spendFinalNumber, impostoPctNumber, custoPublisherLive]);
+    // A receber de Wave = reembolso do custo TOTAL + margem Caracol.
+    const aReceberWave = custoTotal + margemCaracol;
+    return {
+      impostoCusto,
+      custoTotal,
+      imposto,
+      lucroBruto,
+      lucroLiquido,
+      margemCaracol,
+      aReceberWave
+    };
+  }, [
+    spendFinalNumber,
+    impostoPctNumber,
+    custoPublisherLive,
+    impostoCustoPct,
+    custoInvoiceConvertidoLive
+  ]);
 
   // Troca de cliente: pre-preenche o imposto% com o default do parceiro (se vazio).
   const handleClientChange = (id: string) => {
@@ -757,6 +820,10 @@ export function CampanhaFechamentoModal({
       // Partilha Wave: so envia imposto%/cambio quando o cliente e parceiro.
       imposto_pct: isRevenueShare ? impostoPctNumber : null,
       fx_rate: isRevenueShare ? fxRateNumber : null,
+      // Custo invoice: so em fechamento Wave, sempre em USD. Backend antigo
+      // (pre-073) ignora o campo — por isso o input so aparece quando ele ja
+      // devolve os campos novos, pra nao engolir valor digitado em silencio.
+      custo_invoice_usd: isRevenueShare ? custoInvoiceUsdNumber : null,
       publishers: publishersPayload
     };
 
@@ -839,6 +906,11 @@ export function CampanhaFechamentoModal({
       setFxRate(
         saved.fx_rate != null
           ? blurFormatNumberPtBr(String(saved.fx_rate), 4)
+          : ""
+      );
+      setCustoInvoiceUsd(
+        saved.custo_invoice_usd != null
+          ? blurFormatNumberPtBr(String(saved.custo_invoice_usd), 2)
           : ""
       );
       setPublishers(
@@ -1044,7 +1116,11 @@ export function CampanhaFechamentoModal({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div
+                      className={`grid grid-cols-1 gap-4 ${
+                        backendTemCustoInvoice ? "sm:grid-cols-3" : "sm:grid-cols-2"
+                      }`}
+                    >
                       <div>
                         <label className="mb-1.5 block text-sm font-medium text-foreground">
                           Imposto %
@@ -1092,6 +1168,63 @@ export function CampanhaFechamentoModal({
                             : "Usado pra converter custo de publisher em moeda diferente."}
                         </p>
                       </div>
+
+                      {/* Custo invoice: SEMPRE em USD, mesmo em campanha BRL.
+                          So aparece quando o backend ja devolve os campos novos
+                          (migration 073 + restart) — antes disso ele ignoraria
+                          o valor digitado no save, sem avisar. */}
+                      {backendTemCustoInvoice && (
+                        <div>
+                          <label className="mb-1.5 block text-sm font-medium text-foreground">
+                            Custo invoice (USD)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted">U$</span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={custoInvoiceUsd}
+                              onChange={(e) =>
+                                setCustoInvoiceUsd(
+                                  sanitizeNumberInput(e.target.value)
+                                )
+                              }
+                              onBlur={(e) =>
+                                setCustoInvoiceUsd(
+                                  blurFormatNumberPtBr(e.target.value, 2)
+                                )
+                              }
+                              disabled={readOnly}
+                              placeholder="0,00"
+                              className={inputCls + " flex-1"}
+                            />
+                          </div>
+                          <p className="mt-1 text-xs text-muted">
+                            {moedaRecebimento === "USD" ? (
+                              "Sempre em USD. Nao leva os 10% de imposto s/ custo."
+                            ) : custoInvoiceUsdNumber === 0 ? (
+                              "Sempre em USD — convertido pra R$ pelo cambio acima."
+                            ) : fxRateNumber != null ? (
+                              <>
+                                ={" "}
+                                {formatCurrency(
+                                  custoInvoiceConvertidoLive,
+                                  moedaRecebimento
+                                )}{" "}
+                                (cambio{" "}
+                                {fxRate ||
+                                  blurFormatNumberPtBr(String(fxRateNumber), 4)}
+                                )
+                              </>
+                            ) : (
+                              <span className="text-amber-300">
+                                Informe o cambio pra converter em{" "}
+                                {moedaPrefix}.
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Conta do Wave: NF -> custo -> lucro -> margem Caracol */}
@@ -1107,8 +1240,48 @@ export function CampanhaFechamentoModal({
                           moedaRecebimento
                         )}`}
                       />
+                      {impostoCustoPct > 0 && (
+                        <WaveRow
+                          label={`Imposto s/ custo (${
+                            Number.isInteger(impostoCustoPct)
+                              ? String(impostoCustoPct)
+                              : blurFormatNumberPtBr(String(impostoCustoPct), 2)
+                          }%)`}
+                          value={`− ${formatCurrency(
+                            waveCalc.impostoCusto,
+                            moedaRecebimento
+                          )}`}
+                        />
+                      )}
+                      {custoInvoiceConvertidoLive !== 0 && (
+                        <WaveRow
+                          label={`Custo invoice (${formatCurrency(
+                            custoInvoiceUsdNumber,
+                            "USD"
+                          )})`}
+                          value={`− ${formatCurrency(
+                            custoInvoiceConvertidoLive,
+                            moedaRecebimento
+                          )}`}
+                        />
+                      )}
                       <WaveRow
-                        label="Lucro bruto (NF − custo)"
+                        label="Custo total"
+                        value={`− ${formatCurrency(
+                          waveCalc.custoTotal,
+                          moedaRecebimento
+                        )}`}
+                        strong
+                      />
+                      {impostoCustoPendente && (
+                        <p className="text-[11px] text-amber-200/90">
+                          O imposto sobre o custo entra depois de salvar — a
+                          aliquota vigente e aplicada pelo backend quando o
+                          fechamento passa a ser de partilha.
+                        </p>
+                      )}
+                      <WaveRow
+                        label="Lucro bruto (NF − custo total)"
                         value={formatCurrency(
                           waveCalc.lucroBruto,
                           moedaRecebimento
@@ -1141,15 +1314,16 @@ export function CampanhaFechamentoModal({
 
                     <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-3">
                       <p className="text-[11px] uppercase tracking-wider text-violet-200/80">
-                        A receber de Wave (reembolso custo + margem Caracol)
+                        A receber de Wave (reembolso custo total + margem Caracol)
                       </p>
                       <p className="mt-1 font-mono text-lg font-semibold text-violet-200">
                         {formatCurrency(waveCalc.aReceberWave, moedaRecebimento)}
                       </p>
                       <p className="mt-1 text-[11px] text-violet-200/70">
                         ={" "}
-                        {formatCurrency(custoPublisherLive, moedaRecebimento)} (custo)
-                        + {formatCurrency(waveCalc.margemCaracol, moedaRecebimento)}{" "}
+                        {formatCurrency(waveCalc.custoTotal, moedaRecebimento)} (custo
+                        total) +{" "}
+                        {formatCurrency(waveCalc.margemCaracol, moedaRecebimento)}{" "}
                         (margem)
                       </p>
                     </div>

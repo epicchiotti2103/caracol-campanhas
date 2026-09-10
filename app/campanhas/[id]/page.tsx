@@ -339,7 +339,7 @@ function CampanhaDetail() {
                 </p>
                 {campanha.paused_registered_at && (
                   <p className="mt-0.5 text-xs text-danger/70">
-                    registrado em {fmtDate(campanha.paused_registered_at)}
+                    registrado em {fmtInstantDate(campanha.paused_registered_at)}
                   </p>
                 )}
               </div>
@@ -749,11 +749,34 @@ function PauseWindowsView({
   );
 }
 
+/**
+ * Formata um campo com semantica de DATA (nao de instante) como dd/mm/aaaa.
+ *
+ * Le os digitos da propria string ISO — igual ao `fmtDateOnly` do modal de
+ * fechamento. Campos como `deactivated_at`/`paused_at`/`inicio`/`fim` sao datas
+ * que o user digita; a coluna e `timestamptz`, o backend grava meia-noite e o
+ * Supabase devolve `2026-08-01T00:00:00+00:00`. Passar isso pelo `Date` em
+ * Brasilia (UTC-3) daria 31/07 — um dia a menos.
+ *
+ * NAO use pra `*_registered_at`/`created_at`/`updated_at`: esses sao instantes
+ * de verdade e tem que ser convertidos pro fuso local (`fmtInstantDate`).
+ */
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
   // Aceita "YYYY-MM-DD"
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
+}
+
+/**
+ * Data (dd/mm/aaaa) de um INSTANTE, convertida pro fuso local. Usado nos
+ * `*_registered_at` — o carimbo de quando o registro foi feito, que em UTC pode
+ * cair no dia seguinte ao dia local em que o user clicou.
+ */
+function fmtInstantDate(s: string | null | undefined): string {
+  if (!s) return "—";
   const d = new Date(s);
   return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
@@ -1387,14 +1410,20 @@ function MediaSourceRow({
       {ms.deactivated_reason && (
         <span className="text-xs text-muted">— {ms.deactivated_reason}</span>
       )}
-      {ms.deactivated_at && (
+      {/* `deactivated_at` e DATA (digitos da string, sem `Date`);
+          `deactivated_registered_at` e INSTANTE (converte pro fuso local). */}
+      {ms.deactivated_at ? (
         <span className="text-xs text-muted">
           Pausado em {fmtDate(ms.deactivated_at)}
           {ms.deactivated_registered_at && (
             <span className="ml-1 text-[10px] text-muted/70">
-              (registrado em {fmtDate(ms.deactivated_registered_at)})
+              (registrado em {fmtInstantDate(ms.deactivated_registered_at)})
             </span>
           )}
+        </span>
+      ) : (
+        <span className="rounded-md bg-muted/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted">
+          sem data
         </span>
       )}
       {canEdit && (

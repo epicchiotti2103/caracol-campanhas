@@ -590,9 +590,16 @@ export interface Fechamento {
   is_revenue_share?: boolean;
   imposto_pct?: number | null; // percentual (ex: 12.27); null se nao-Wave
   fx_rate?: number | null; // taxa US$ -> moeda do fechamento; null se nao informado
-  custo_publisher_total?: number | null; // custo dos publishers, ja convertido
-  lucro_bruto?: number | null; // NF faturada − custo publisher
-  lucro_liquido?: number | null; // lucro bruto − imposto
+  custo_publisher_total?: number | null; // custo CRU dos publishers, ja convertido (sem os 10%)
+  // ---- Imposto s/ custo (10%) + custo invoice — backend >= migration 073 ----
+  // Ausentes enquanto o backend nao subir; a tela degrada pro comportamento antigo.
+  custo_invoice_usd?: number | null; // digitado pelo user, SEMPRE em USD
+  custo_invoice_convertido?: number | null; // na moeda do fechamento
+  imposto_custo_pct?: number | null; // 10 (vigencia mes_ref >= 2026-07 + partilha ativa) ou 0
+  imposto_custo_valor?: number | null; // custo_publisher_total * pct/100
+  custo_total?: number | null; // custo publisher + imposto s/ custo + custo invoice
+  lucro_bruto?: number | null; // NF faturada − custo TOTAL
+  lucro_liquido?: number | null; // NF − NF*imposto_pct% − custo total
   margem_caracol?: number | null; // fatia da Caracol = lucro liquido / 3
   // DEPRECATED: agora == margem_caracol (mantido por compat; usar margem_caracol).
   // NAO e "tudo que a Caracol recebe" — o a receber de Wave = custo + margem.
@@ -608,6 +615,9 @@ export interface FechamentoUpsertPayload {
   // imposto_pct = percentual (ex: 12.27); fx_rate = US$ -> moeda do fechamento.
   imposto_pct?: number | null;
   fx_rate?: number | null;
+  // Custo invoice do fechamento Wave — SEMPRE em USD (o backend converte).
+  // Backend anterior a migration 073 ignora o campo (pydantic extra=ignore).
+  custo_invoice_usd?: number | null;
   publishers: Array<{
     publisher_name: string;
     platform?: string | null;
