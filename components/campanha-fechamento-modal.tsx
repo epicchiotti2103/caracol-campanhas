@@ -756,24 +756,12 @@ export function CampanhaFechamentoModal({
   const removePub = (idx: number) =>
     setPublishers((prev) => prev.filter((_, i) => i !== idx));
 
-  // Toggle "pagar excedente mesmo assim": reflete o spend_final na hora
-  // (cheio = realizado_spend; cortado = spend_valido). O backend recalcula
-  // de qualquer forma, mas a UI mostra o impacto imediato.
+  // Toggle "pagar excedente mesmo assim": SO muda a flag. O valor digitado no
+  // pagamento do publisher e soberano — o toggle nao reescreve o input (antes
+  // trocava pelo realizado_spend/spend_valido, que sao spend da CAMPANHA, nao
+  // pagamento ao publisher). Cap/teto aparecem so como orientacao na row.
   const toggleExcedente = (idx: number, aprovado: boolean) =>
-    setPublishers((prev) =>
-      prev.map((row, i) => {
-        if (i !== idx) return row;
-        const target = aprovado ? row.realizado_spend : row.spend_valido;
-        return {
-          ...row,
-          excedente_aprovado: aprovado,
-          spend_final_input:
-            target != null
-              ? blurFormatNumberPtBr(String(target), 2)
-              : row.spend_final_input
-        };
-      })
-    );
+    updatePub(idx, { excedente_aprovado: aprovado });
 
   // ----- Submit (upsert) -----
   const handleSave = async () => {
@@ -808,7 +796,8 @@ export function CampanhaFechamentoModal({
         moeda: p.moeda,
         p360_event_rate: p.p360_event_rate,
         notes: p.notes.trim() || null,
-        // So envia a flag pra publishers com cap; backend recalcula spend_valido.
+        // spend_final = o DIGITADO, sempre (cap e so orientacao). A flag vai
+        // so pra publishers com cap — registro de que o excedente foi aprovado.
         ...(hasCap(p) ? { excedente_aprovado: p.excedente_aprovado } : {})
       });
     }
@@ -1612,6 +1601,54 @@ export function CampanhaFechamentoModal({
                                   </span>
                                 )}
                               </div>
+                              {(() => {
+                                // Orientacao: o digitado e soberano. Sugerido/teto
+                                // nunca substituem o input — so o botao, se o user quiser.
+                                if (readOnly) return null;
+                                const sug = pagamentoSugerido(p);
+                                const teto = tetoLabel(p);
+                                if (sug == null && teto == null) return null;
+                                const atual = parseNumberPtBr(p.spend_final_input);
+                                const difereDoSugerido =
+                                  sug != null &&
+                                  !(Number.isFinite(atual) && Math.abs(atual - sug) < 0.005);
+                                return (
+                                  <div className="mt-1 flex flex-wrap items-center justify-end gap-x-1.5 text-[11px] text-muted">
+                                    {sug != null && (
+                                      <span>
+                                        sugerido:{" "}
+                                        <span className="font-mono">
+                                          {formatCurrency(sug, p.moeda)}
+                                        </span>
+                                      </span>
+                                    )}
+                                    {sug != null && teto != null && <span>·</span>}
+                                    {teto != null && (
+                                      <span>
+                                        teto:{" "}
+                                        <span className="font-mono">{teto}</span>
+                                      </span>
+                                    )}
+                                    {difereDoSugerido && (
+                                      <button
+                                        type="button"
+                                        tabIndex={-1}
+                                        onClick={() =>
+                                          updatePub(idx, {
+                                            spend_final_input: blurFormatNumberPtBr(
+                                              String(sug),
+                                              2
+                                            )
+                                          })
+                                        }
+                                        className="rounded border border-border px-1.5 py-0.5 text-[11px] text-foreground transition-colors hover:border-primary/40 hover:text-primary"
+                                      >
+                                        usar sugerido
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="px-3 py-2 text-center">
                               <select
@@ -1896,6 +1933,28 @@ function fmtCapValue(
   return unidade === "usd" ? formatCurrency(v, moeda) : fmtQty(v);
 }
 
+// Pagamento sugerido (Σ qty x PO) a partir do memorial do backend. So existe
+// no stub (fechamento ainda nao salvo) — o GET persistido nao devolve
+// pagamento_base. Qualquer subtotal nulo -> null (nao inventa conta).
+function pagamentoSugerido(p: PublisherRow): number | null {
+  if (!p.pagamento_base || p.pagamento_base.length === 0) return null;
+  let total = 0;
+  for (const b of p.pagamento_base) {
+    if (b.subtotal == null || !Number.isFinite(b.subtotal)) return null;
+    total += b.subtotal;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Teto do cap na unidade do cap (eventos validos ou US$) — so orientacao.
+function tetoLabel(p: PublisherRow): string | null {
+  if (!hasCap(p)) return null;
+  if (p.cap_unidade === "usd") {
+    return p.spend_valido != null ? formatCurrency(p.spend_valido, p.moeda) : null;
+  }
+  return p.valido_qty != null ? `${fmtQty(p.valido_qty)} eventos validos` : null;
+}
+
 function capTipoLabelPt(t: CampanhaCapTipo | null): string {
   return t === "diario" ? "diario" : t === "mensal" ? "mensal" : "—";
 }
@@ -2035,6 +2094,11 @@ function CapExcedenteBlock({
         </span>
         {!hasExcedente && (
           <span className="text-muted">(sem excedente neste mes)</span>
+        )}
+        {hasExcedente && (
+          <span className="text-muted">
+            (so registro — nao altera o valor digitado)
+          </span>
         )}
       </label>
     </div>
