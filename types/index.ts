@@ -283,6 +283,55 @@ export interface CampanhaStatusWindowsResponse {
   pausas: CampanhaPauseWindow[];
 }
 
+// ---- Log de pausa/reativacao por media source (migration 077) ----
+
+/** Linha de GET /campanhas/publishers/media-sources/{ms_id}/status-log. */
+export interface MediaSourceStatusLogEntry {
+  id: string;
+  campanha_id: string;
+  publisher_nome: string;
+  media_source_name: string;
+  media_source_id: string | null;
+  action: "pausa" | "reativacao";
+  reason: string | null;
+  effective_at: string; // DATA efetiva (meia-noite) — formatar pelos digitos
+  registered_at: string; // INSTANTE do registro
+  changed_by: string | null; // null nas linhas de backfill
+  changed_by_name: string | null;
+  mes_referencia: string | null;
+}
+
+export interface MediaSourceStatusLogResponse {
+  media_source_id: string;
+  campanha_id: string;
+  publisher_nome: string;
+  media_source_name: string;
+  active: boolean;
+  deactivated_reason: string | null;
+  deactivated_at: string | null;
+  log: MediaSourceStatusLogEntry[];
+}
+
+/** Item de GET /campanhas/{id}/media-sources/status-windows?month=YYYY-MM. */
+export interface MediaSourceStatusWindow {
+  media_source_id: string | null; // null quando so existe no log (row apagada)
+  publisher_nome: string;
+  media_source_name: string;
+  active: boolean | null;
+  deactivated_reason: string | null;
+  sem_data: boolean; // pausada sem data efetiva conhecida
+  fonte: "log" | "cache";
+  dias_ativos: number | null; // null quando sem_data
+  dias_no_mes: number;
+  pausas: CampanhaPauseWindow[];
+}
+
+export interface MediaSourcesStatusWindowsResponse {
+  campanha_id: string;
+  month: string;
+  media_sources: MediaSourceStatusWindow[];
+}
+
 // Papel de um user dentro de uma campanha (N:N via tabela campanhas_users).
 export type CampanhaUserRole = "gestor";
 

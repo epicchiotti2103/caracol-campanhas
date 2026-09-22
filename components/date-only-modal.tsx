@@ -17,6 +17,7 @@ export function DateOnlyModal({
   registeredNote = "Registrado automaticamente na data de hoje.",
   confirmLabel = "Confirmar",
   confirmVariant = "primary",
+  minDate,
   submitting,
   onConfirm,
   onCancel
@@ -27,6 +28,8 @@ export function DateOnlyModal({
   registeredNote?: string;
   confirmLabel?: string;
   confirmVariant?: "danger" | "primary";
+  /** Data minima aceita (YYYY-MM-DD), ex.: data da pausa na reativacao. */
+  minDate?: string;
   submitting: boolean;
   onConfirm: (effectiveAt: string) => void;
   onCancel: () => void;
@@ -50,6 +53,7 @@ export function DateOnlyModal({
         <input
           type="date"
           value={effectiveAt}
+          min={minDate}
           onChange={(e) => setEffectiveAt(e.target.value)}
           autoFocus
           className="mb-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"

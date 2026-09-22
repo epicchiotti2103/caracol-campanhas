@@ -1,5 +1,9 @@
 import { apiFetch } from "@/lib/api";
-import type { CampanhaStatusWindowsResponse } from "@/types";
+import type {
+  CampanhaStatusWindowsResponse,
+  MediaSourceStatusLogResponse,
+  MediaSourcesStatusWindowsResponse
+} from "@/types";
 
 /**
  * Deriva o param `month=YYYY-MM` a partir do mes de referencia da campanha
@@ -39,6 +43,53 @@ export async function fetchStatusWindows(
   } catch {
     // 404 / falha de rede — degrada silenciosamente. Erros de sessao (401) ja
     // sao tratados no apiFetch.
+    return null;
+  }
+}
+
+/**
+ * Janelas de pausa POR MEDIA SOURCE (PID) no mes, so as que tiveram pausa no
+ * mes ou estao pausadas sem data (`only_paused=true`). Log da migration 077.
+ *
+ * Endpoint: GET /campanhas/{id}/media-sources/status-windows?month=YYYY-MM&only_paused=true
+ *
+ * Tolerante: qualquer falha (500 antes da migration 077, 404, rede) resolve
+ * `null` e a UI esconde a secao.
+ */
+export async function fetchMediaSourcesStatusWindows(
+  campanhaId: string,
+  mesReferencia: string | null | undefined
+): Promise<MediaSourcesStatusWindowsResponse | null> {
+  const month = toMonthParam(mesReferencia);
+  if (!month) return null;
+  try {
+    const res: MediaSourcesStatusWindowsResponse = await apiFetch(
+      `/campanhas/${campanhaId}/media-sources/status-windows?month=${month}&only_paused=true`
+    );
+    return res && Array.isArray(res.media_sources) ? res : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Historico de pausa/reativacao de uma media source. `allMonths` inclui os
+ * clones mensais da mesma campanha (mesmo publisher + PID). Falha => null.
+ *
+ * Endpoint: GET /campanhas/publishers/media-sources/{ms_id}/status-log[?all_months=true]
+ */
+export async function fetchMediaSourceStatusLog(
+  msId: string,
+  allMonths: boolean
+): Promise<MediaSourceStatusLogResponse | null> {
+  try {
+    const res: MediaSourceStatusLogResponse = await apiFetch(
+      `/campanhas/publishers/media-sources/${msId}/status-log${
+        allMonths ? "?all_months=true" : ""
+      }`
+    );
+    return res && Array.isArray(res.log) ? res : null;
+  } catch {
     return null;
   }
 }

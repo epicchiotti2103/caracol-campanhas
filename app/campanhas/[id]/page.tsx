@@ -13,7 +13,8 @@ import {
   Copy,
   Ban,
   RotateCcw,
-  Trash2
+  Trash2,
+  History
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -24,7 +25,12 @@ import { ReasonDateModal } from "@/components/reason-date-modal";
 import { DateOnlyModal } from "@/components/date-only-modal";
 import { Pause, Play } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { fetchStatusWindows } from "@/lib/pause-windows";
+import {
+  fetchMediaSourcesStatusWindows,
+  fetchStatusWindows
+} from "@/lib/pause-windows";
+import { MediaSourceStatusLogModal } from "@/components/media-source-status-log-modal";
+import { MediaSourcePauseWindowsView } from "@/components/media-source-pause-windows";
 import { invalidateCache } from "@/lib/cache";
 import { useToast } from "@/lib/toast-context";
 import { useCan } from "@/lib/perms-context";
@@ -41,6 +47,7 @@ import type {
   CampanhaMediaSource,
   CampanhaPauseWindow,
   CampanhaStatusWindowsResponse,
+  MediaSourcesStatusWindowsResponse,
   CampanhaPublisher,
   CampanhaPublisherRenegociacao,
   Moeda
@@ -73,6 +80,10 @@ function CampanhaDetail() {
   const [unpausing, setUnpausing] = useState(false);
   const [statusWindows, setStatusWindows] =
     useState<CampanhaStatusWindowsResponse | null>(null);
+  // Janelas de pausa por PID (migration 077). null = rota indisponivel -> a
+  // secao e os botoes de historico somem.
+  const [msWindows, setMsWindows] =
+    useState<MediaSourcesStatusWindowsResponse | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -86,8 +97,14 @@ function CampanhaDetail() {
         const res: Campanha = await apiFetch(`/campanhas/${id}`);
         if (!cancelled) setCampanha(res);
         // Janelas de pausa do mes (status-windows). Tolerante a backend ausente.
-        const sw = await fetchStatusWindows(id, res.mes_referencia);
-        if (!cancelled) setStatusWindows(sw);
+        const [sw, msw] = await Promise.all([
+          fetchStatusWindows(id, res.mes_referencia),
+          fetchMediaSourcesStatusWindows(id, res.mes_referencia)
+        ]);
+        if (!cancelled) {
+          setStatusWindows(sw);
+          setMsWindows(msw);
+        }
       } catch (err: any) {
         if (!cancelled) setError(err?.message || "Falha ao carregar campanha.");
       } finally {
@@ -106,8 +123,12 @@ function CampanhaDetail() {
       const res: Campanha = await apiFetch(`/campanhas/${id}`);
       setCampanha(res);
       // Recarrega tambem as janelas de pausa (pausar/reativar muda o log).
-      const sw = await fetchStatusWindows(id, res.mes_referencia);
+      const [sw, msw] = await Promise.all([
+        fetchStatusWindows(id, res.mes_referencia),
+        fetchMediaSourcesStatusWindows(id, res.mes_referencia)
+      ]);
       setStatusWindows(sw);
+      setMsWindows(msw);
     } catch (err: any) {
       toast.error(err?.message || "Falha ao recarregar campanha.");
     }
@@ -360,6 +381,7 @@ function CampanhaDetail() {
             <CampanhaView
               campanha={campanha}
               statusWindows={statusWindows}
+              msWindows={msWindows}
               onReload={reloadCampanha}
             />
           )}
@@ -492,14 +514,19 @@ function DeleteModal({
 function CampanhaView({
   campanha,
   statusWindows,
+  msWindows,
   onReload
 }: {
   campanha: Campanha;
   statusWindows: CampanhaStatusWindowsResponse | null;
+  msWindows: MediaSourcesStatusWindowsResponse | null;
   onReload: () => Promise<void> | void;
 }) {
   const pausas = statusWindows?.pausas ?? [];
   const hasPauseHistory = pausas.length > 0;
+  // Log por PID disponivel (rota respondeu) -> mostra os botoes de historico.
+  const msLogAvailable = msWindows !== null;
+  const hasMsPauses = (msWindows?.media_sources?.length ?? 0) > 0;
   return (
     <div className="space-y-6">
       {/* Identificacao / status no topo */}
@@ -556,6 +583,12 @@ function CampanhaView({
         </Section>
       )}
 
+      {hasMsPauses && (
+        <Section title="PIDs com pausa no mes">
+          <MediaSourcePauseWindowsView data={msWindows} />
+        </Section>
+      )}
+
       <Section title="Eventos pagos">
         <EventosTable
           eventos={campanha.eventos_pagos}
@@ -601,6 +634,7 @@ function CampanhaView({
         <PublishersTable
           publishers={campanha.publishers}
           moeda={campanha.moeda}
+          historyAvailable={msLogAvailable}
           onReload={onReload}
         />
       </Section>
@@ -1177,11 +1211,14 @@ function DuplicateModal({
 function PublishersTable({
   publishers,
   moeda,
+  historyAvailable,
   onReload
 }: {
   publishers: CampanhaPublisher[] | undefined;
   // Moeda da campanha — usada so como fallback quando o publisher nao tem moeda.
   moeda: Moeda | string | null | undefined;
+  // Rota de log por PID respondeu (migration 077 aplicada) -> botao historico.
+  historyAvailable: boolean;
   onReload: () => Promise<void> | void;
 }) {
   if (!publishers || publishers.length === 0) {
@@ -1224,6 +1261,7 @@ function PublishersTable({
                   <MediaSourceRow
                     key={ms.id || `${ms.name}-${j}`}
                     ms={ms}
+                    historyAvailable={historyAvailable}
                     onReload={onReload}
                   />
                 ))}
@@ -1335,9 +1373,11 @@ function PublishersTable({
 
 function MediaSourceRow({
   ms,
+  historyAvailable,
   onReload
 }: {
   ms: CampanhaMediaSource;
+  historyAvailable: boolean;
   onReload: () => Promise<void> | void;
 }) {
   const toast = useToast();
@@ -1345,18 +1385,25 @@ function MediaSourceRow({
   const canEdit = can("campanhas.edit");
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
-  const patch = async (active: boolean, reason?: string, deactivatedAt?: string) => {
+  // Reativacao manda a data efetiva (effective_at, default hoje). 400 = data
+  // anterior a pausa: o toast mostra o detail e o modal fica aberto.
+  const patch = async (active: boolean, reason?: string, date?: string) => {
     setBusy(true);
     try {
       await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
         method: "PATCH",
         body: JSON.stringify(
-          active ? { active } : { active, reason, deactivated_at: deactivatedAt }
+          active
+            ? { active, effective_at: date }
+            : { active, reason, deactivated_at: date }
         )
       });
       toast.success(active ? "Media source reativada." : "Media source desativada.");
       setConfirmOpen(false);
+      setReactivateOpen(false);
       await onReload();
     } catch (err: any) {
       toast.error(err?.message || "Falha ao atualizar media source.");
@@ -1365,12 +1412,34 @@ function MediaSourceRow({
     }
   };
 
+  const historyBtn =
+    historyAvailable && ms.id ? (
+      <button
+        type="button"
+        onClick={() => setHistoryOpen(true)}
+        className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary"
+        title="Historico de pausa/reativacao"
+        aria-label="Historico de pausa/reativacao"
+      >
+        <History className="h-3 w-3" />
+      </button>
+    ) : null;
+  const historyModal =
+    historyOpen && ms.id ? (
+      <MediaSourceStatusLogModal
+        msId={ms.id}
+        name={ms.name}
+        onClose={() => setHistoryOpen(false)}
+      />
+    ) : null;
+
   if (ms.active) {
     return (
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs text-foreground">
           {ms.name}
         </span>
+        {historyBtn}
         {canEdit && (
           <button
             type="button"
@@ -1397,6 +1466,7 @@ function MediaSourceRow({
             onCancel={() => setConfirmOpen(false)}
           />
         )}
+        {historyModal}
       </div>
     );
   }
@@ -1426,10 +1496,11 @@ function MediaSourceRow({
           sem data
         </span>
       )}
+      {historyBtn}
       {canEdit && (
         <button
           type="button"
-          onClick={() => patch(true)}
+          onClick={() => setReactivateOpen(true)}
           disabled={busy}
           className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
           title="Reativar media source"
@@ -1442,6 +1513,25 @@ function MediaSourceRow({
           Reativar
         </button>
       )}
+      {reactivateOpen && (
+        <DateOnlyModal
+          title="Reativar media source"
+          description={
+            <>
+              Reativar{" "}
+              <span className="font-mono text-foreground">{ms.name}</span>.
+              Informe a data de retorno.
+            </>
+          }
+          dateLabel="Data de retorno"
+          confirmLabel="Reativar"
+          minDate={ms.deactivated_at?.slice(0, 10) || undefined}
+          submitting={busy}
+          onConfirm={(date) => patch(true, undefined, date)}
+          onCancel={() => setReactivateOpen(false)}
+        />
+      )}
+      {historyModal}
     </div>
   );
 }

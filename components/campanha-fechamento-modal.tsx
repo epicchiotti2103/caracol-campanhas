@@ -39,6 +39,7 @@ import {
   sanitizeNumberInput
 } from "@/lib/format";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { MediaSourcePauseWindowsPanel } from "@/components/media-source-pause-windows";
 import type {
   CampanhaCapTipo,
   CampanhaCapUnidade,
@@ -1456,6 +1457,13 @@ export function CampanhaFechamentoModal({
 
                 <PidsPausadosResumo
                   cadastrados={publishersCadastrados}
+                  month={month}
+                />
+
+                {/* Intervalos de pausa por PID no mes (log 077). So exibicao;
+                    some se a rota falhar. */}
+                <MediaSourcePauseWindowsPanel
+                  campanhaId={campanhaId}
                   month={month}
                 />
 

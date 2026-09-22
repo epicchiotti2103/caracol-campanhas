@@ -16,6 +16,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
+import { DateOnlyModal } from "@/components/date-only-modal";
 import { todayIso } from "@/components/reason-date-modal";
 import {
   blurFormatNumberPtBr,
@@ -2283,9 +2284,12 @@ function FormMediaSourceRow({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
 
   const hasId = Boolean(ms.id);
 
+  // Reativacao manda effective_at (data de retorno, default hoje); 400 = data
+  // anterior a pausa -> toast com o detail e o modal fica aberto.
   const patch = async (
     active: boolean,
     reason?: string,
@@ -2297,13 +2301,16 @@ function FormMediaSourceRow({
       await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
         method: "PATCH",
         body: JSON.stringify(
-          active ? { active } : { active, reason, deactivated_at: deactivatedAt }
+          active
+            ? { active, effective_at: deactivatedAt }
+            : { active, reason, deactivated_at: deactivatedAt }
         )
       });
       toast.success(
         active ? "Media source reativada." : "Media source desativada."
       );
       setConfirmOpen(false);
+      setReactivateOpen(false);
       if (active) {
         onToggled({
           active: true,
@@ -2396,7 +2403,7 @@ function FormMediaSourceRow({
           </span>
           <button
             type="button"
-            onClick={() => patch(true)}
+            onClick={() => setReactivateOpen(true)}
             disabled={busy}
             className="inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
             title="Reativar media source"
@@ -2426,6 +2433,24 @@ function FormMediaSourceRow({
           </p>
         )}
         {linkInputs}
+        {reactivateOpen && (
+          <DateOnlyModal
+            title="Reativar media source"
+            description={
+              <>
+                Reativar{" "}
+                <span className="font-mono text-foreground">{ms.name}</span>.
+                Informe a data de retorno.
+              </>
+            }
+            dateLabel="Data de retorno"
+            confirmLabel="Reativar"
+            minDate={ms.deactivated_at?.slice(0, 10) || undefined}
+            submitting={busy}
+            onConfirm={(date) => patch(true, undefined, date)}
+            onCancel={() => setReactivateOpen(false)}
+          />
+        )}
       </div>
     );
   }
