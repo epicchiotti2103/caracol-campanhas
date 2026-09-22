@@ -489,6 +489,12 @@ export interface FechamentoPublisher {
   // true = o publisher tem mais de um evento e so parte tem PO cadastrado, ou
   // seja, o valor sugerido esta INCOMPLETO (badge de atencao na row).
   po_parcial?: boolean | null;
+  // Fechamento JA SALVO (GET/POST): a sugestao PO x eventos vem aqui, separada
+  // do spend_final (que e o valor gravado/digitado). No stub o backend nao manda
+  // esse campo e a sugestao continua vindo em spend_final.
+  spend_sugerido?: number | null;
+  pagamento_motivo?: string | null;
+  pagamento_cap_aplicado?: boolean | null;
 }
 
 /** Uma linha do memorial de calculo do pagamento sugerido (por evento). */

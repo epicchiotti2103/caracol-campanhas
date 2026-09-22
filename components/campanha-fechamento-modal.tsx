@@ -111,13 +111,24 @@ interface PublisherRow {
   pagamento_base: PagamentoBaseItem[];
   // Publisher com mais de um evento e so parte com PO -> valor incompleto.
   po_parcial: boolean;
-  // O backend devolveu spend_final = null (nao deu pra calcular: sem PO).
+  // Sem sugestao (backend nao conseguiu calcular: sem PO).
   // Usado SO pro placeholder "sem PO" — row nova adicionada a mao nao ganha.
   pagamento_sem_po: boolean;
+  // Pagamento sugerido (PO x eventos, moeda do publisher). Fechamento salvo:
+  // `spend_sugerido`; stub: `spend_final` (que no stub E a sugestao). So
+  // orientacao — nunca substitui o digitado.
+  sugerido: number | null;
 }
 
 function hasCap(p: PublisherRow): boolean {
   return p.cap_tipo === "mensal" || p.cap_tipo === "diario";
+}
+
+function sugeridoDe(p: FechamentoPublisher): number | null {
+  if (p.spend_sugerido !== undefined) return p.spend_sugerido ?? null;
+  // Stub (sem id): spend_final e a sugestao do backend. Salvo em backend antigo
+  // (sem spend_sugerido): nao ha sugestao — spend_final e o valor gravado.
+  return p.id ? null : p.spend_final ?? null;
 }
 
 function toRow(
@@ -155,7 +166,8 @@ function toRow(
     caps_evento: Array.isArray(p.caps_evento) ? p.caps_evento : [],
     pagamento_base: Array.isArray(p.pagamento_base) ? p.pagamento_base : [],
     po_parcial: p.po_parcial === true,
-    pagamento_sem_po: p.spend_final == null
+    pagamento_sem_po: sugeridoDe(p) == null,
+    sugerido: sugeridoDe(p)
   };
 }
 
@@ -176,8 +188,8 @@ function pagamentoBaseTitle(
 }
 
 // Ordena os publishers em ordem alfabetica (case-insensitive, locale pt-BR).
-// Importante ordenar o ARRAY DO STATE (nao so na render) pra que o index do
-// .map() bata com o index do state — updatePub(idx, ...) depende disso.
+// Ordena o ARRAY DO STATE (so no load/unlock). Edicoes vao pela local_key,
+// entao a ordem nao afeta em qual row o valor cai.
 function sortRows(rows: PublisherRow[]): PublisherRow[] {
   return [...rows].sort((a, b) =>
     a.publisher_name.localeCompare(b.publisher_name, "pt-BR", {
@@ -216,13 +228,13 @@ export function CampanhaFechamentoModal({
   // Custo invoice — SEMPRE em USD (mesmo em campanha BRL); o backend converte.
   const [custoInvoiceUsd, setCustoInvoiceUsd] = useState("");
   const [publishers, setPublishers] = useState<PublisherRow[]>([]);
-  // Linhas de cap com o breakdown expandido (por indice de publisher).
-  const [expandedCaps, setExpandedCaps] = useState<Set<number>>(new Set());
-  const toggleCapExpanded = (idx: number) =>
+  // Linhas de cap com o breakdown expandido (por local_key do publisher).
+  const [expandedCaps, setExpandedCaps] = useState<Set<string>>(new Set());
+  const toggleCapExpanded = (key: string) =>
     setExpandedCaps((prev) => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   // PO acordado do cadastro (referencia; casa por NOME com o realizado).
@@ -684,9 +696,12 @@ export function CampanhaFechamentoModal({
   );
 
   // ----- Handlers de publishers -----
-  const updatePub = (idx: number, patch: Partial<PublisherRow>) => {
+  // Edicoes sempre pela local_key da row (nunca pelo indice) — assim nenhuma
+  // reordenacao/insercao/remocao entre o render e o evento faz o valor cair
+  // na linha vizinha.
+  const updatePub = (key: string, patch: Partial<PublisherRow>) => {
     setPublishers((prev) =>
-      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+      prev.map((row) => (row.local_key === key ? { ...row, ...patch } : row))
     );
   };
   const newRowSeq = useRef(0);
@@ -727,6 +742,7 @@ export function CampanhaFechamentoModal({
         pagamento_base: [],
         po_parcial: false,
         pagamento_sem_po: false,
+        sugerido: null,
         ...partial
       }
     ]);
@@ -753,15 +769,15 @@ export function CampanhaFechamentoModal({
     setPickerQuery("");
   };
 
-  const removePub = (idx: number) =>
-    setPublishers((prev) => prev.filter((_, i) => i !== idx));
+  const removePub = (key: string) =>
+    setPublishers((prev) => prev.filter((row) => row.local_key !== key));
 
   // Toggle "pagar excedente mesmo assim": SO muda a flag. O valor digitado no
   // pagamento do publisher e soberano — o toggle nao reescreve o input (antes
   // trocava pelo realizado_spend/spend_valido, que sao spend da CAMPANHA, nao
   // pagamento ao publisher). Cap/teto aparecem so como orientacao na row.
-  const toggleExcedente = (idx: number, aprovado: boolean) =>
-    updatePub(idx, { excedente_aprovado: aprovado });
+  const toggleExcedente = (key: string, aprovado: boolean) =>
+    updatePub(key, { excedente_aprovado: aprovado });
 
   // ----- Submit (upsert) -----
   const handleSave = async () => {
@@ -1495,7 +1511,7 @@ export function CampanhaFechamentoModal({
                           const capColSpan = readOnly ? 7 : 8;
                           const showCap = hasCap(p);
                           const showCapEvento = p.caps_evento.length > 0;
-                          const expanded = expandedCaps.has(idx);
+                          const expanded = expandedCaps.has(p.local_key);
                           return (
                           <Fragment key={p.local_key}>
                           <tr
@@ -1511,7 +1527,7 @@ export function CampanhaFechamentoModal({
                                 type="text"
                                 value={p.publisher_name}
                                 onChange={(e) =>
-                                  updatePub(idx, {
+                                  updatePub(p.local_key, {
                                     publisher_name: e.target.value
                                   })
                                 }
@@ -1573,14 +1589,14 @@ export function CampanhaFechamentoModal({
                                   inputMode="decimal"
                                   value={p.spend_final_input}
                                   onChange={(e) =>
-                                    updatePub(idx, {
+                                    updatePub(p.local_key, {
                                       spend_final_input: sanitizeNumberInput(
                                         e.target.value
                                       )
                                     })
                                   }
                                   onBlur={(e) =>
-                                    updatePub(idx, {
+                                    updatePub(p.local_key, {
                                       spend_final_input: blurFormatNumberPtBr(
                                         e.target.value
                                       )
@@ -1634,7 +1650,7 @@ export function CampanhaFechamentoModal({
                                         type="button"
                                         tabIndex={-1}
                                         onClick={() =>
-                                          updatePub(idx, {
+                                          updatePub(p.local_key, {
                                             spend_final_input: blurFormatNumberPtBr(
                                               String(sug),
                                               2
@@ -1654,7 +1670,7 @@ export function CampanhaFechamentoModal({
                               <select
                                 value={p.moeda}
                                 onChange={(e) =>
-                                  updatePub(idx, {
+                                  updatePub(p.local_key, {
                                     moeda: e.target.value === "BRL" ? "BRL" : "USD"
                                   })
                                 }
@@ -1676,7 +1692,7 @@ export function CampanhaFechamentoModal({
                               <td className="px-3 py-2 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => removePub(idx)}
+                                  onClick={() => removePub(p.local_key)}
                                   className="text-muted transition-colors hover:text-danger"
                                   aria-label="Remover publisher"
                                   tabIndex={-1}
@@ -1700,9 +1716,9 @@ export function CampanhaFechamentoModal({
                                     row={p}
                                     moeda={p.moeda}
                                     expanded={expanded}
-                                    onToggleExpand={() => toggleCapExpanded(idx)}
+                                    onToggleExpand={() => toggleCapExpanded(p.local_key)}
                                     onToggleAprovado={(v) =>
-                                      toggleExcedente(idx, v)
+                                      toggleExcedente(p.local_key, v)
                                     }
                                     readOnly={readOnly}
                                   />
@@ -1933,17 +1949,9 @@ function fmtCapValue(
   return unidade === "usd" ? formatCurrency(v, moeda) : fmtQty(v);
 }
 
-// Pagamento sugerido (Σ qty x PO) a partir do memorial do backend. So existe
-// no stub (fechamento ainda nao salvo) — o GET persistido nao devolve
-// pagamento_base. Qualquer subtotal nulo -> null (nao inventa conta).
+// Pagamento sugerido da row (PO x eventos) — so orientacao.
 function pagamentoSugerido(p: PublisherRow): number | null {
-  if (!p.pagamento_base || p.pagamento_base.length === 0) return null;
-  let total = 0;
-  for (const b of p.pagamento_base) {
-    if (b.subtotal == null || !Number.isFinite(b.subtotal)) return null;
-    total += b.subtotal;
-  }
-  return Math.round(total * 100) / 100;
+  return p.sugerido != null && Number.isFinite(p.sugerido) ? p.sugerido : null;
 }
 
 // Teto do cap na unidade do cap (eventos validos ou US$) — so orientacao.
