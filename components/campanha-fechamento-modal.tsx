@@ -1428,6 +1428,7 @@ export function CampanhaFechamentoModal({
                   {!readOnly && (
                     <div className="flex items-center gap-2">
                     <ImportarXlsxFechamento
+                      campanhaId={campanhaId}
                       publishers={publishers}
                       suppliers={suppliers}
                       onApply={applyXlsxImport}

@@ -21,10 +21,22 @@ export interface XlsxPublisherTotal {
   temValor: boolean;
 }
 
+/** Par (Media Source, Publisher) de uma linha do Excel (deduplicado). */
+export interface XlsxPidPar {
+  /** PID como apareceu (trim). */
+  media_source: string;
+  /** Publisher como apareceu (trim, espacos colapsados). */
+  publisher: string;
+  /** normalizarCompacto(publisher). */
+  publisher_key: string;
+}
+
 export interface XlsxFechamentoParse {
   aba: string;
   publishers: XlsxPublisherTotal[];
   total: number;
+  /** Pares (PID, publisher) da aba; [] se a aba nao tem coluna "Media Source". */
+  pares: XlsxPidPar[];
 }
 
 /** lower + trim + espacos internos colapsados (exibicao/comparacao leve). */
@@ -146,13 +158,25 @@ export function parseFechamentoWorkbook(
       const iPub = header.indexOf("publisher");
       const iPo = header.indexOf("po total");
       if (iPub < 0 || iPo < 0) continue;
+      const iMs = header.indexOf("media source");
 
       const map = new Map<string, XlsxPublisherTotal>();
+      const pares = new Map<string, XlsxPidPar>();
       for (let r = h + 1; r < rows.length; r++) {
         const row = rows[r] || [];
         const nomeRaw = String(row[iPub] ?? "").trim();
         const key = normalizarCompacto(nomeRaw);
         if (!key || IGNORAR.has(key)) continue;
+        if (iMs >= 0) {
+          const ms = String(row[iMs] ?? "").trim();
+          const parKey = `${normalizarPid(ms)}|${key}`;
+          if (ms && !pares.has(parKey))
+            pares.set(parKey, {
+              media_source: ms,
+              publisher: nomeRaw.replace(/\s+/g, " "),
+              publisher_key: key
+            });
+        }
         const n = toNumber(row[iPo]);
         const valor = n ?? 0;
         const cur = map.get(key);
@@ -176,7 +200,7 @@ export function parseFechamentoWorkbook(
       }));
       const total =
         Math.round(publishers.reduce((a, p) => a + p.valor, 0) * 100) / 100;
-      return { aba, publishers, total };
+      return { aba, publishers, total, pares: Array.from(pares.values()) };
     }
   }
   throw new Error(
@@ -296,4 +320,159 @@ export function casarExcel(
       };
     return { excel: x, tipo: "nao_achado", grupoId: null, candidatos: [] };
   });
+}
+
+// ---------------------------------------------------------------------------
+// PIDs do Excel que nao estao no cadastro da campanha (publishers -> media
+// sources). So lista — o cadastro e opcional e manual (checkbox + botao).
+// ---------------------------------------------------------------------------
+
+/**
+ * Chave do PID: so trim + lower. NAO usa normalizarCompacto — "_" faz parte
+ * do PID ("366mobi_int" != "366mobiint").
+ */
+export function normalizarPid(s: string): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+/** Publisher do cadastro da campanha (subset do GET /campanhas/{id}/publishers). */
+export interface CadastroPublisherRef {
+  id: string;
+  nome: string;
+  supplier_id?: string | null;
+  media_sources: { name: string }[];
+}
+
+export type PidFaltanteStatus =
+  | "cadastravel" // publisher casou (exato/aproximado) — pode cadastrar
+  | "publisher_fora" // publisher do Excel nao casou com nenhum da campanha
+  | "publisher_ambiguo" // 2+ publishers da campanha candidatos — nao casa
+  | "outro_publisher"; // PID ja cadastrado em OUTRO publisher da campanha
+
+export interface PidFaltante {
+  /** Chave unica da linha (pid|publisher_key). */
+  key: string;
+  media_source: string;
+  /** Publisher como veio do Excel. */
+  publisher_excel: string;
+  status: PidFaltanteStatus;
+  /** Publisher da campanha que recebe o PID (so em "cadastravel"). */
+  publisher_id: string | null;
+  publisher_nome: string | null;
+  /** Casou por aproximacao (nome do Excel != nome do cadastro). */
+  aproximado: boolean;
+  /** "outro_publisher": onde o PID ja esta. "publisher_ambiguo": candidatos. */
+  detalhe: string[];
+}
+
+/**
+ * Compara os pares (PID, publisher) do Excel com o cadastro. Retorna so os
+ * PIDs que NAO estao no publisher indicado. PID que ja existe em outro
+ * publisher da campanha vem como "outro_publisher" (nao cadastravel — viraria
+ * duplicata). Casamento do publisher = mesmas regras do casamento de valores
+ * (casarExcel: chave compacta, aproximacao, ambiguidade -> nao casa).
+ */
+export function pidsFaltantes(
+  pares: XlsxPidPar[],
+  cadastro: CadastroPublisherRef[]
+): PidFaltante[] {
+  const grupos = agruparFechamento(
+    cadastro.map((p) => ({
+      local_key: p.id,
+      publisher_name: p.nome,
+      supplier_id: p.supplier_id ?? null
+    }))
+  );
+  const pubById = new Map(cadastro.map((p) => [p.id, p]));
+  // Grupo (pode juntar publishers duplicados na campanha) -> PIDs de todas as rows.
+  const pidsDoGrupo = new Map<string, Set<string>>();
+  for (const g of grupos) {
+    const set = new Set<string>();
+    for (const r of g.rows)
+      for (const ms of pubById.get(r.local_key)?.media_sources ?? [])
+        set.add(normalizarPid(ms.name));
+    pidsDoGrupo.set(g.id, set);
+  }
+  // PID -> publishers da campanha onde ja esta.
+  const ondeEsta = new Map<string, string[]>();
+  for (const p of cadastro)
+    for (const ms of p.media_sources) {
+      const k = normalizarPid(ms.name);
+      if (!k) continue;
+      ondeEsta.set(k, [...(ondeEsta.get(k) ?? []), p.nome]);
+    }
+
+  // Casa cada publisher unico do Excel uma vez so.
+  const unicos = new Map<string, XlsxPublisherTotal>();
+  for (const par of pares)
+    if (!unicos.has(par.publisher_key))
+      unicos.set(par.publisher_key, {
+        nome: par.publisher,
+        key: par.publisher_key,
+        valor: 0,
+        linhas: 0,
+        temValor: false
+      });
+  const casamento = new Map(
+    casarExcel(Array.from(unicos.values()), grupos).map((c) => [c.excel.key, c])
+  );
+  const nomeGrupo = (gid: string) =>
+    grupos.find((g) => g.id === gid)?.rows[0].publisher_name ?? gid;
+
+  const out: PidFaltante[] = [];
+  for (const par of pares) {
+    const pid = normalizarPid(par.media_source);
+    if (!pid) continue;
+    const c = casamento.get(par.publisher_key);
+    const gid =
+      c && (c.tipo === "exato" || c.tipo === "aproximado") ? c.grupoId : null;
+    if (gid && pidsDoGrupo.get(gid)?.has(pid)) continue; // ja cadastrado
+    const base = {
+      key: `${pid}|${par.publisher_key}`,
+      media_source: par.media_source,
+      publisher_excel: par.publisher
+    };
+    const jaEm = ondeEsta.get(pid);
+    if (jaEm?.length) {
+      out.push({
+        ...base,
+        status: "outro_publisher",
+        publisher_id: null,
+        publisher_nome: null,
+        aproximado: false,
+        detalhe: jaEm
+      });
+    } else if (gid) {
+      out.push({
+        ...base,
+        status: "cadastravel",
+        publisher_id: gid,
+        publisher_nome: nomeGrupo(gid),
+        aproximado: c?.tipo === "aproximado",
+        detalhe: []
+      });
+    } else {
+      const ambiguo = c?.tipo === "ambiguo_exato" || c?.tipo === "ambiguo_aprox";
+      out.push({
+        ...base,
+        status: ambiguo ? "publisher_ambiguo" : "publisher_fora",
+        publisher_id: null,
+        publisher_nome: null,
+        aproximado: false,
+        detalhe: ambiguo ? (c?.candidatos ?? []).map(nomeGrupo) : []
+      });
+    }
+  }
+  const ordem: Record<PidFaltanteStatus, number> = {
+    cadastravel: 0,
+    outro_publisher: 1,
+    publisher_ambiguo: 2,
+    publisher_fora: 3
+  };
+  return out.sort(
+    (a, b) =>
+      ordem[a.status] - ordem[b.status] ||
+      a.publisher_excel.localeCompare(b.publisher_excel) ||
+      a.media_source.localeCompare(b.media_source)
+  );
 }

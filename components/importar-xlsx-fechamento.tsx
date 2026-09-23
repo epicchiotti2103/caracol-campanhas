@@ -14,20 +14,32 @@
 //      escolhe.
 // So no "Aplicar" devolve os valores pro modal preencher o pagamento digitado.
 // Nada salva sozinho — o user revisa e clica Salvar como sempre.
+//
+// Secao extra (recolhida): PIDs do Excel (coluna "Media Source") que nao estao
+// no cadastro da campanha. Cadastro OPCIONAL e manual: checkbox desmarcada por
+// padrao + botao "Cadastrar selecionados", que adiciona o PID ao publisher
+// casado (ativo) via PATCH /campanhas/{id} com a lista `publishers` completa
+// relida na hora (sem caps/active -> backend preserva caps, pausas e links;
+// payouts reenviados iguais). Nao mexe nos valores nem salva o fechamento.
 
 import { useMemo, useRef, useState } from "react";
 import { AlertCircle, FileSpreadsheet, Loader2, X } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 import { formatCurrency, parseNumberPtBr } from "@/lib/format";
+import { useToast } from "@/lib/toast-context";
 import {
   agruparFechamento,
   casarExcel,
   normalizarCompacto,
+  normalizarPid,
   parseFechamentoXlsxFile,
+  pidsFaltantes,
   type CasamentoExcel,
   type GrupoFechamento,
+  type PidFaltante,
   type XlsxFechamentoParse
 } from "@/lib/fechamento-xlsx";
-import type { Moeda, Supplier } from "@/types";
+import type { CampanhaPublisher, Moeda, Supplier } from "@/types";
 
 export interface ImportXlsxPublisherRef {
   local_key: string;
@@ -62,6 +74,8 @@ interface LinhaGrupo {
 }
 
 interface Props {
+  /** Campanha do fechamento — usada so pra listar/cadastrar PIDs faltantes. */
+  campanhaId: string;
   publishers: ImportXlsxPublisherRef[];
   /** Catalogo de fornecedores (resolve supplier_id das rows pelo nome). */
   suppliers?: Supplier[];
@@ -70,6 +84,7 @@ interface Props {
 }
 
 export function ImportarXlsxFechamento({
+  campanhaId,
   publishers,
   suppliers,
   disabled,
@@ -84,6 +99,19 @@ export function ImportarXlsxFechamento({
   // (chave do Excel -> id do grupo; "" = nao casar).
   const [aproxOff, setAproxOff] = useState<Set<string>>(new Set());
   const [escolhas, setEscolhas] = useState<Record<string, string>>({});
+  // Cadastro da campanha (publishers -> media sources) pra comparar os PIDs.
+  const toast = useToast();
+  const [cadastro, setCadastro] = useState<CampanhaPublisher[] | null>(null);
+  const [cadastroErro, setCadastroErro] = useState("");
+  const [pidSel, setPidSel] = useState<Set<string>>(new Set());
+  const [salvandoPids, setSalvandoPids] = useState(false);
+
+  const carregarCadastro = async (): Promise<CampanhaPublisher[]> => {
+    const res: { items?: CampanhaPublisher[] } = await apiFetch(
+      `/campanhas/${campanhaId}/publishers`
+    );
+    return res?.items ?? [];
+  };
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -92,9 +120,22 @@ export function ImportarXlsxFechamento({
     setParse(null);
     setAproxOff(new Set());
     setEscolhas({});
+    setCadastro(null);
+    setCadastroErro("");
+    setPidSel(new Set());
     setArquivo(file.name);
     try {
-      setParse(await parseFechamentoXlsxFile(file));
+      const p = await parseFechamentoXlsxFile(file);
+      setParse(p);
+      if (p.pares.length > 0) {
+        carregarCadastro()
+          .then(setCadastro)
+          .catch((e) =>
+            setCadastroErro(
+              e instanceof Error ? e.message : "Nao foi possivel ler o cadastro."
+            )
+          );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nao foi possivel ler o arquivo.");
     } finally {
@@ -109,6 +150,9 @@ export function ImportarXlsxFechamento({
     setArquivo("");
     setAproxOff(new Set());
     setEscolhas({});
+    setCadastro(null);
+    setCadastroErro("");
+    setPidSel(new Set());
   };
 
   // Rows validas com supplier_id resolvido + agrupamento por publisher.
@@ -214,6 +258,120 @@ export function ImportarXlsxFechamento({
       else next.add(key);
       return next;
     });
+
+  // ---- PIDs do Excel fora do cadastro (opcional/manual) ----
+  const faltantes = useMemo<PidFaltante[]>(
+    () =>
+      parse && cadastro
+        ? pidsFaltantes(
+            parse.pares,
+            cadastro
+              .filter((p) => p.id)
+              .map((p) => ({
+                id: p.id as string,
+                nome: p.nome,
+                supplier_id: p.supplier_id ?? null,
+                media_sources: p.media_sources ?? []
+              }))
+          )
+        : [],
+    [parse, cadastro]
+  );
+  const cadastraveis = faltantes.filter((f) => f.status === "cadastravel");
+  const selecionados = cadastraveis.filter((f) => pidSel.has(f.key));
+
+  const togglePid = (key: string) =>
+    setPidSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const cadastrarPids = async () => {
+    if (!selecionados.length || salvandoPids) return;
+    // O mesmo PID marcado em 2 publishers viraria duplicata.
+    const porPid = new Map<string, string>();
+    for (const f of selecionados) {
+      const k = normalizarPid(f.media_source);
+      if (porPid.has(k) && porPid.get(k) !== f.publisher_id) {
+        toast.error(`${f.media_source} marcado em 2 publishers — deixe so um.`);
+        return;
+      }
+      porPid.set(k, f.publisher_id as string);
+    }
+    setSalvandoPids(true);
+    try {
+      // Rele o cadastro NA HORA (nunca usa o snapshot da previa) e remonta a
+      // lista completa de publishers. O PATCH faz replace: manda tudo que o
+      // form de edicao manda, menos caps (omitido = backend nao mexe) e active
+      // (omitido = backend preserva pausa/data/motivo e links por nome).
+      const atual = await carregarCadastro();
+      if (atual.some((p) => !p.nome?.trim())) {
+        // Publisher sem nome nao passa na validacao do PATCH e o replace
+        // derrubaria o resto — nao arrisca; corrige pelo form da campanha.
+        toast.error("Ha publisher sem nome no cadastro — corrija pela edicao da campanha.");
+        return;
+      }
+      const novosPorPub = new Map<string, string[]>();
+      let adicionados = 0;
+      for (const f of selecionados) {
+        const pub = atual.find((p) => p.id === f.publisher_id);
+        if (!pub) continue;
+        const ja = (pub.media_sources ?? []).some(
+          (ms) => normalizarPid(ms.name) === normalizarPid(f.media_source)
+        );
+        const lista = novosPorPub.get(pub.id as string) ?? [];
+        if (ja || lista.some((n) => normalizarPid(n) === normalizarPid(f.media_source)))
+          continue;
+        novosPorPub.set(pub.id as string, [...lista, f.media_source.trim()]);
+        adicionados++;
+      }
+      if (adicionados === 0) {
+        toast.info("Nada a cadastrar — os PIDs ja estao no cadastro.");
+        setCadastro(atual);
+        setPidSel(new Set());
+        return;
+      }
+      const payload = {
+        publishers: atual.map((p) => ({
+          nome: p.nome,
+          supplier_id: p.supplier_id ?? null,
+          moeda: p.moeda === "BRL" ? "BRL" : "USD",
+          media_sources: [
+            ...(p.media_sources ?? []).map((ms) => ({
+              name: ms.name,
+              link_ios: ms.link_ios ?? null,
+              link_android: ms.link_android ?? null,
+              link_view_ios: ms.link_view_ios ?? null,
+              link_view_android: ms.link_view_android ?? null
+            })),
+            ...(novosPorPub.get(p.id as string) ?? []).map((name) => ({
+              name,
+              active: true
+            }))
+          ],
+          payouts: (p.payouts ?? []).map((po) => ({
+            evento_nome: po.evento_nome,
+            payout: po.payout
+          }))
+        }))
+      };
+      await apiFetch(`/campanhas/${campanhaId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      toast.success(`${adicionados} PID(s) cadastrado(s) na campanha.`);
+      setPidSel(new Set());
+      setCadastro(await carregarCadastro());
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : "Nao foi possivel cadastrar os PIDs."
+      );
+    } finally {
+      setSalvandoPids(false);
+    }
+  };
 
   const fmt = (v: number | null, m: Moeda | null) =>
     v == null ? "—" : formatCurrency(v, m ?? "USD");
@@ -466,6 +624,80 @@ export function ImportarXlsxFechamento({
                         </tbody>
                       </table>
                     </div>
+                  )}
+                  {cadastroErro && (
+                    <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                      Nao foi possivel comparar os PIDs com o cadastro: {cadastroErro}
+                    </div>
+                  )}
+                  {faltantes.length > 0 && (
+                    <details className="rounded-lg border border-border">
+                      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-amber-300">
+                        {faltantes.length} PIDs do Excel nao estao no cadastro
+                        {cadastraveis.length < faltantes.length &&
+                          ` (${cadastraveis.length} cadastraveis)`}
+                      </summary>
+                      <div className="space-y-2 border-t border-border px-3 py-2">
+                        <p className="text-xs text-muted">
+                          Opcional. Marque os PIDs que quer adicionar ao publisher da
+                          campanha (entram ativos). Isso altera o cadastro da campanha,
+                          nao os valores nem o fechamento.
+                        </p>
+                        <ul className="space-y-1 text-xs">
+                          {faltantes.map((f) => (
+                            <li key={f.key}>
+                              {f.status === "cadastravel" ? (
+                                <label className="flex cursor-pointer items-start gap-1.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={pidSel.has(f.key)}
+                                    onChange={() => togglePid(f.key)}
+                                    disabled={salvandoPids}
+                                    className="mt-0.5 accent-orange-500"
+                                  />
+                                  <span className="text-foreground">
+                                    <span className="font-mono">{f.media_source}</span>
+                                    <span className="text-muted">
+                                      {" "}
+                                      → {f.publisher_nome}
+                                      {f.aproximado && ` (Excel: ${f.publisher_excel}, por aproximacao)`}
+                                    </span>
+                                  </span>
+                                </label>
+                              ) : (
+                                <div className="flex items-start gap-1.5 pl-[18px]">
+                                  <span className="text-muted">
+                                    <span className="font-mono text-foreground/70">
+                                      {f.media_source}
+                                    </span>{" "}
+                                    —{" "}
+                                    {f.status === "outro_publisher"
+                                      ? `Excel diz ${f.publisher_excel}, mas ja esta cadastrado em ${f.detalhe.join(", ")}`
+                                      : f.status === "publisher_ambiguo"
+                                        ? `publisher ${f.publisher_excel} ambiguo na campanha (${f.detalhe.join(", ")})`
+                                        : `publisher ${f.publisher_excel} nao esta na campanha`}
+                                  </span>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                        {cadastraveis.length > 0 && (
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={cadastrarPids}
+                              disabled={selecionados.length === 0 || salvandoPids}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-50"
+                            >
+                              {salvandoPids && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                              Cadastrar selecionados ({selecionados.length})
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </details>
                   )}
                   <p className="text-xs text-muted">
                     Aplicar preenche o pagamento dos {casou.length} publisher(s) que

@@ -12,7 +12,7 @@ CRUD completo, backend integrado, layout de login unificado com o resto da suite
 
 - Next.js 14 (App Router) + TypeScript
 - Tailwind CSS (mesmo tema laranja escuro da suite)
-- SheetJS (`xlsx`, tarball oficial da CDN sheetjs — nao o registry npm) pra ler o Excel de fechamento no navegador (botao "Importar Excel" no modal de fechamento: soma `PO total` por Publisher, casa nomes pela chave sem espaco/pontuacao + aproximacao por sufixo societario/prefixo com checkbox, previa antes de aplicar, nada salva sozinho)
+- SheetJS (`xlsx`, tarball oficial da CDN sheetjs — nao o registry npm) pra ler o Excel de fechamento no navegador (botao "Importar Excel" no modal de fechamento: soma `PO total` por Publisher, casa nomes pela chave sem espaco/pontuacao + aproximacao por sufixo societario/prefixo com checkbox, previa antes de aplicar, nada salva sozinho; secao recolhida opcional lista os PIDs da coluna `Media Source` que nao estao no cadastro da campanha e cadastra os marcados via PATCH da campanha)
 - js-cookie pra sessao
 - Auth via API do Tracker (`POST /api/v1/auth/login`) com SSO via cookie `.aeobr.com.br`
 - **Sem backend proprio** — rotas `/api/v1/campanhas/*` vivem em `tracker-caracol/backend/app/routes/campanhas.py`
