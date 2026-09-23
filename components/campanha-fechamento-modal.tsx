@@ -1429,6 +1429,7 @@ export function CampanhaFechamentoModal({
                     <div className="flex items-center gap-2">
                     <ImportarXlsxFechamento
                       publishers={publishers}
+                      suppliers={suppliers}
                       onApply={applyXlsxImport}
                     />
                     <div className="relative" ref={pickerWrapRef}>
