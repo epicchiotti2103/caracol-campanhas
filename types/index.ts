@@ -544,6 +544,44 @@ export interface FechamentoPublisher {
   spend_sugerido?: number | null;
   pagamento_motivo?: string | null;
   pagamento_cap_aplicado?: boolean | null;
+  // Desconto por pausa de PID (tracker 450e8ef). So em fechamento NAO travado;
+  // null/ausente = publisher sem PID pausado no mes. `spend_sugerido` (e o
+  // spend_final do stub) ja vem com o desconto aplicado.
+  pausa_pid?: PausaPidPublisher | null;
+}
+
+/**
+ * Status do desconto de UM PID pausado no fechamento:
+ * - descontado: robo manda daily e mapeia o PID -> eventos dos dias pausados saem
+ * - sem_dado_diario: robo nao manda daily do PID -> nao desconta
+ * - sem_mapeamento_robo: robo atribui o PID a "nao encontrado" -> nao desconta
+ * - sem_atividade: robo manda daily mas o PID nao aparece -> nada a descontar
+ */
+export type PausaPidStatus =
+  | "descontado"
+  | "sem_dado_diario"
+  | "sem_mapeamento_robo"
+  | "sem_atividade";
+
+export interface PausaPidItem {
+  media_source: string;
+  publisher_cadastro: string | null;
+  publisher_robo: string | null;
+  status: PausaPidStatus | string;
+  pausas: CampanhaPauseWindow[];
+  dias_pausados: number;
+  eventos_descontados: Record<string, number>;
+}
+
+export interface PausaPidPublisher {
+  aplicada: boolean;
+  sem_dado_diario: boolean;
+  eventos_brutos: Record<string, number>;
+  eventos_descontados: Record<string, number>;
+  eventos_considerados: Record<string, number>;
+  dias_pausados: number;
+  resumo: string;
+  pids: PausaPidItem[];
 }
 
 /** Uma linha do memorial de calculo do pagamento sugerido (por evento). */
@@ -630,6 +668,9 @@ export interface Fechamento {
   // Cap por evento da CAMPANHA (soma dos publishers). Display only — nao afeta
   // pagamento. Ausente/[] quando nao ha cap por evento.
   caps_evento?: CapEvento[];
+  // PIDs pausados no mes com o status do desconto (tracker 450e8ef). So em
+  // fechamento NAO travado; ausente = backend antigo ou travado.
+  pausas_pid?: PausaPidItem[];
   // Pausa da campanha inteira (espelha os campos de `Campanha`). Aviso no modal.
   campanha_paused?: boolean;
   paused_at?: string | null;

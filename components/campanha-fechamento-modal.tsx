@@ -40,6 +40,7 @@ import {
 } from "@/lib/format";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { MediaSourcePauseWindowsPanel } from "@/components/media-source-pause-windows";
+import { PausaPidBadge } from "@/components/pausa-pid-fechamento";
 import type {
   CampanhaCapTipo,
   CampanhaCapUnidade,
@@ -54,6 +55,7 @@ import type {
   FechamentoUpsertPayload,
   Moeda,
   PagamentoBaseItem,
+  PausaPidPublisher,
   Supplier
 } from "@/types";
 
@@ -119,6 +121,9 @@ interface PublisherRow {
   // `spend_sugerido`; stub: `spend_final` (que no stub E a sugestao). So
   // orientacao — nunca substitui o digitado.
   sugerido: number | null;
+  // Desconto por pausa de PID (so fechamento aberto; null = sem PID pausado).
+  // O `sugerido` acima ja vem com o desconto. Display only, nunca vai pro save.
+  pausa_pid: PausaPidPublisher | null;
 }
 
 function hasCap(p: PublisherRow): boolean {
@@ -168,7 +173,8 @@ function toRow(
     pagamento_base: Array.isArray(p.pagamento_base) ? p.pagamento_base : [],
     po_parcial: p.po_parcial === true,
     pagamento_sem_po: sugeridoDe(p) == null,
-    sugerido: sugeridoDe(p)
+    sugerido: sugeridoDe(p),
+    pausa_pid: p.pausa_pid ?? null
   };
 }
 
@@ -744,6 +750,7 @@ export function CampanhaFechamentoModal({
         po_parcial: false,
         pagamento_sem_po: false,
         sugerido: null,
+        pausa_pid: null,
         ...partial
       }
     ]);
@@ -1465,6 +1472,9 @@ export function CampanhaFechamentoModal({
                 <MediaSourcePauseWindowsPanel
                   campanhaId={campanhaId}
                   month={month}
+                  pausasPid={
+                    !isLocked ? fechamento?.pausas_pid : null
+                  }
                 />
 
                 {publishers.length === 0 ? (
@@ -1554,6 +1564,7 @@ export function CampanhaFechamentoModal({
                                 houvePausaNoMes={houvePausaNoMes}
                                 moeda={p.moeda}
                               />
+                              {!readOnly && <PausaPidBadge info={p.pausa_pid} />}
                             </td>
                             <td className="px-3 py-2 text-right font-mono text-xs text-foreground">
                               {(() => {
@@ -2325,8 +2336,9 @@ interface PidPausadoItem {
 
 /**
  * Resumo consolidado dos PIDs (media sources) pausados da campanha, no topo da
- * secao de publishers. Puramente INFORMATIVO — quem exclui dias do calculo e a
- * pausa da CAMPANHA (`status_windows`), nao a pausa de PID.
+ * secao de publishers. Lista de cadastro (quem esta pausado e desde quando). O
+ * desconto da pausa de PID no valor sugerido e o status por PID ficam no painel
+ * de janelas logo abaixo (`MediaSourcePauseWindowsPanel` + `pausas_pid`).
  *
  * Separa por quando a pausa caiu em relacao ao mes de referencia, porque muda a
  * conferencia manual: pausado NO mes = numeros parciais (destaque ambar); ja
