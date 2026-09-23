@@ -34,6 +34,7 @@ import {
   blurFormatNumberPtBr,
   formatCurrency,
   formatMesAnoLong,
+  formatNumberPtBr,
   moedaShort,
   parseNumberPtBr,
   sanitizeNumberInput
@@ -41,6 +42,10 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { MediaSourcePauseWindowsPanel } from "@/components/media-source-pause-windows";
 import { PausaPidBadge } from "@/components/pausa-pid-fechamento";
+import {
+  ImportarXlsxFechamento,
+  type ImportXlsxUpdate
+} from "@/components/importar-xlsx-fechamento";
 import type {
   CampanhaCapTipo,
   CampanhaCapUnidade,
@@ -777,6 +782,25 @@ export function CampanhaFechamentoModal({
     setPickerQuery("");
   };
 
+  // Importar Excel: preenche o pagamento digitado das rows que casaram (pela
+  // local_key). Rows fora do Excel ficam intactas; nada e salvo aqui.
+  const applyXlsxImport = (updates: ImportXlsxUpdate[]) => {
+    const byKey = new Map(updates.map((u) => [u.local_key, u.valor]));
+    setPublishers((prev) =>
+      prev.map((row) =>
+        byKey.has(row.local_key)
+          ? {
+              ...row,
+              spend_final_input: formatNumberPtBr(byKey.get(row.local_key) ?? 0, 2)
+            }
+          : row
+      )
+    );
+    toast.success(
+      `${updates.length} publisher(s) preenchido(s) pelo Excel. Revise e salve.`
+    );
+  };
+
   const removePub = (key: string) =>
     setPublishers((prev) => prev.filter((row) => row.local_key !== key));
 
@@ -1384,6 +1408,11 @@ export function CampanhaFechamentoModal({
                     Publishers
                   </h3>
                   {!readOnly && (
+                    <div className="flex items-center gap-2">
+                    <ImportarXlsxFechamento
+                      publishers={publishers}
+                      onApply={applyXlsxImport}
+                    />
                     <div className="relative" ref={pickerWrapRef}>
                       <button
                         type="button"
@@ -1458,6 +1487,7 @@ export function CampanhaFechamentoModal({
                           </div>
                         </div>
                       )}
+                    </div>
                     </div>
                   )}
                 </div>
