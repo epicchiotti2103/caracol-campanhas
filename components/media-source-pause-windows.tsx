@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pause } from "lucide-react";
+import { ChevronDown, ChevronRight, Pause } from "lucide-react";
 import { fetchMediaSourcesStatusWindows } from "@/lib/pause-windows";
 import { fmtDateDigits } from "./media-source-status-log-modal";
 import {
@@ -108,29 +108,55 @@ export function MediaSourcePauseWindowsPanel({
     };
   }, [campanhaId, month]);
 
+  // Comeca colapsado: no modal de fechamento e so consulta (fica no fim).
+  const [open, setOpen] = useState(false);
+
   const temPausasPid = (pausasPid?.length ?? 0) > 0;
   if ((!data || data.media_sources.length === 0) && !temPausasPid) return null;
+  // Contagem do cabecalho = PIDs distintos entre janelas + itens do fechamento.
+  const keys = new Set<string>();
+  for (const r of data?.media_sources ?? []) {
+    keys.add(pausaPidKey(r.publisher_nome, r.media_source_name));
+  }
+  for (const p of pausasPid || []) {
+    keys.add(pausaPidKey(p.publisher_cadastro, p.media_source));
+  }
   return (
-    <div className="rounded-lg border border-border bg-background/40 p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-        <p className="text-xs font-medium uppercase tracking-wider text-muted">
+    <div className="rounded-lg border border-border bg-background/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-left"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted" />
+        )}
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted">
           {temPausasPid
             ? "PIDs com pausa no mes"
             : "PIDs com pausa no mes (informativo)"}
-        </p>
+        </span>
+        <span className="text-[11px] text-muted/70">({keys.size})</span>
         {temPausasPid && (
           <span className="ml-auto">
             <PausaPidContadores pids={pausasPid || []} />
           </span>
         )}
-      </div>
-      {temPausasPid && (
-        <p className="mb-2 text-[11px] text-muted">
-          O valor sugerido desconta os eventos dos dias pausados quando o robo
-          manda o dado diario do PID. O valor digitado nao muda sozinho.
-        </p>
+      </button>
+      {open && (
+        <div className="border-t border-border p-3">
+          {temPausasPid && (
+            <p className="mb-2 text-[11px] text-muted">
+              O valor sugerido desconta os eventos dos dias pausados quando o
+              robo manda o dado diario do PID. O valor digitado nao muda sozinho.
+            </p>
+          )}
+          <MediaSourcePauseWindowsView data={data} pausasPid={pausasPid} />
+        </div>
       )}
-      <MediaSourcePauseWindowsView data={data} pausasPid={pausasPid} />
     </div>
   );
 }

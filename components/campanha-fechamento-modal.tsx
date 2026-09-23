@@ -155,8 +155,13 @@ function toRow(
     spend_real_display:
       p.spend_real != null ? formatCurrency(p.spend_real, moeda) : "—",
     spend_real_raw: p.spend_real ?? null,
+    // Sugestao NAO preenche o input: row sem id (stub) comeca VAZIA — o
+    // spend_final dela e a sugestao do backend, que so aparece embaixo do
+    // campo com o botao "usar sugerido". Row salva mostra o valor gravado.
     spend_final_input:
-      p.spend_final != null ? blurFormatNumberPtBr(String(p.spend_final), 2) : "",
+      p.id && p.spend_final != null
+        ? blurFormatNumberPtBr(String(p.spend_final), 2)
+        : "",
     moeda: p.moeda === "BRL" ? "BRL" : "USD",
     p360_event_rate: p.p360_event_rate ?? null,
     notes: p.notes || "",
@@ -824,19 +829,25 @@ export function CampanhaFechamentoModal({
     }
 
     const publishersPayload: FechamentoUpsertPayload["publishers"] = [];
+    const vaziosPub: string[] = [];
     for (const p of publishers) {
       const name = p.publisher_name.trim();
       if (!name) continue;
-      // Campo VAZIO (backend nao conseguiu sugerir: publisher sem PO) nao trava
-      // o save — vai como 0, igual ja acontece nas somas exibidas no modal.
-      // So valor preenchido e invalido/negativo bloqueia.
+      // Campo VAZIO nao vira 0 (regra da suite "sem valor nao vira 0"). O
+      // backend exige spend_final numerico (NOT NULL), entao vazio bloqueia o
+      // save: o user digita o valor (0 explicito se nao paga), usa a sugestao
+      // ou remove o publisher.
       const vazio = p.spend_final_input.trim() === "";
+      if (vazio) {
+        vaziosPub.push(name);
+        continue;
+      }
       const parsed = parseNumberPtBr(p.spend_final_input);
-      if (!vazio && (!Number.isFinite(parsed) || parsed < 0)) {
+      if (!Number.isFinite(parsed) || parsed < 0) {
         setError(`Spend final invalido no publisher "${name}".`);
         return;
       }
-      const spend = vazio ? 0 : parsed;
+      const spend = parsed;
       publishersPayload.push({
         publisher_name: name,
         platform: p.platform || null,
@@ -848,6 +859,13 @@ export function CampanhaFechamentoModal({
         // so pra publishers com cap — registro de que o excedente foi aprovado.
         ...(hasCap(p) ? { excedente_aprovado: p.excedente_aprovado } : {})
       });
+    }
+    if (vaziosPub.length > 0) {
+      setError(
+        `Pagamento vazio em ${vaziosPub.length} publisher(s): ${vaziosPub.join(", ")}. ` +
+          `Preencha o valor (use "usar sugerido" ou digite 0 se nao ha pagamento) ou remova o publisher.`
+      );
+      return;
     }
 
     const payload: FechamentoUpsertPayload = {
@@ -1492,21 +1510,6 @@ export function CampanhaFechamentoModal({
                   )}
                 </div>
 
-                <PidsPausadosResumo
-                  cadastrados={publishersCadastrados}
-                  month={month}
-                />
-
-                {/* Intervalos de pausa por PID no mes (log 077). So exibicao;
-                    some se a rota falhar. */}
-                <MediaSourcePauseWindowsPanel
-                  campanhaId={campanhaId}
-                  month={month}
-                  pausasPid={
-                    !isLocked ? fechamento?.pausas_pid : null
-                  }
-                />
-
                 {publishers.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-border bg-background p-6 text-center text-sm text-muted">
                     Nenhum publisher. Adicione manualmente se quiser detalhar o
@@ -1829,6 +1832,22 @@ export function CampanhaFechamentoModal({
                   <CapsEventoBlock caps={fechamento!.caps_evento!} />
                 </section>
               )}
+
+              {/* PIDs pausados: consulta, no fim do modal (colapsados). Os
+                  badges de pausa por publisher seguem na tabela. */}
+              <section className="space-y-2">
+                <PidsPausadosResumo
+                  cadastrados={publishersCadastrados}
+                  month={month}
+                />
+                {/* Intervalos de pausa por PID no mes (log 077). So exibicao;
+                    some se a rota falhar. */}
+                <MediaSourcePauseWindowsPanel
+                  campanhaId={campanhaId}
+                  month={month}
+                  pausasPid={!isLocked ? fechamento?.pausas_pid : null}
+                />
+              </section>
 
               {error && fechamento && <ErrorBox text={error} />}
             </div>
@@ -2365,8 +2384,8 @@ interface PidPausadoItem {
 }
 
 /**
- * Resumo consolidado dos PIDs (media sources) pausados da campanha, no topo da
- * secao de publishers. Lista de cadastro (quem esta pausado e desde quando). O
+ * Resumo consolidado dos PIDs (media sources) pausados da campanha, no fim do
+ * modal (colapsado, pra consulta). Lista de cadastro (quem esta pausado e desde quando). O
  * desconto da pausa de PID no valor sugerido e o status por PID ficam no painel
  * de janelas logo abaixo (`MediaSourcePauseWindowsPanel` + `pausas_pid`).
  *
@@ -2427,7 +2446,8 @@ function PidsPausadosResumo({
     grupos.depois.length +
     grupos.sem_data.length;
 
-  const [open, setOpen] = useState(() => total <= 10);
+  // Comeca colapsado: e consulta, fica no fim do modal.
+  const [open, setOpen] = useState(false);
 
   if (total === 0) return null;
 
