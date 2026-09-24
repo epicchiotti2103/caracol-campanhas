@@ -14,7 +14,8 @@ import {
   LineChart,
   KeyRound,
   Wallet,
-  Table2
+  Table2,
+  ClipboardCheck
 } from "lucide-react";
 
 type LinkDef = { href: string; label: string; icon: any };
@@ -22,6 +23,7 @@ type LinkDef = { href: string; label: string; icon: any };
 const LINKS: LinkDef[] = [
   { href: "/campanhas", label: "Campanhas", icon: Megaphone },
   { href: "/desempenho", label: "Desempenho", icon: LineChart },
+  { href: "/fechamento", label: "Fechamento", icon: ClipboardCheck },
   { href: "/media-sources", label: "Media Sources", icon: Table2 },
   { href: "/pagamentos", label: "Pagamentos", icon: Wallet }
 ];

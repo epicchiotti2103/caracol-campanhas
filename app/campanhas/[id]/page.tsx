@@ -29,6 +29,7 @@ import {
   fetchMediaSourcesStatusWindows,
   fetchStatusWindows
 } from "@/lib/pause-windows";
+import { PidsNaoCadastrados } from "@/components/pids-nao-cadastrados";
 import { MediaSourceStatusLogModal } from "@/components/media-source-status-log-modal";
 import { MediaSourcePauseWindowsView } from "@/components/media-source-pause-windows";
 import { invalidateCache } from "@/lib/cache";
@@ -531,6 +532,7 @@ function CampanhaView({
   // Log por PID disponivel (rota respondeu) -> mostra os botoes de historico.
   const msLogAvailable = msWindows !== null;
   const hasMsPauses = (msWindows?.media_sources?.length ?? 0) > 0;
+  const can = useCan();
   return (
     <div className="space-y-6">
       {/* Identificacao / status no topo */}
@@ -642,6 +644,13 @@ function CampanhaView({
           onReload={onReload}
         />
       </Section>
+
+      <PidsNaoCadastrados
+        campanhaId={campanha.id}
+        publishers={campanha.publishers}
+        canEdit={can("campanhas.edit")}
+        onCadastrado={onReload}
+      />
 
       <Section title="Criativo e observacoes">
         <Field label="Criativo">

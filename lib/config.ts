@@ -7,3 +7,7 @@ export const API_BASE_URL = /\/api\/v\d+$/.test(trimmed)
 
 export const HUB_URL =
   process.env.NEXT_PUBLIC_HUB_URL || "https://app.aeobr.com.br";
+
+export const NF_URL = (
+  process.env.NEXT_PUBLIC_NF_URL || "https://nf.aeobr.com.br"
+).replace(/\/+$/, "");

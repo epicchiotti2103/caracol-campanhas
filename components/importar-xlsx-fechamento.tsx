@@ -18,15 +18,16 @@
 // Secao extra (recolhida): PIDs do Excel (coluna "Media Source") que nao estao
 // no cadastro da campanha. Cadastro OPCIONAL e manual: checkbox desmarcada por
 // padrao + botao "Cadastrar selecionados", que adiciona o PID ao publisher
-// casado (ativo) via PATCH /campanhas/{id} com a lista `publishers` completa
-// relida na hora (sem caps/active -> backend preserva caps, pausas e links;
-// payouts reenviados iguais). Nao mexe nos valores nem salva o fechamento.
+// casado (ativo) via POST /campanhas/publishers/{id}/media-sources (1 por
+// publisher; so adiciona, nao recria os outros). Nao mexe nos valores nem
+// salva o fechamento.
 
 import { useMemo, useRef, useState } from "react";
 import { AlertCircle, FileSpreadsheet, Loader2, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { formatCurrency, parseNumberPtBr } from "@/lib/format";
 import { useToast } from "@/lib/toast-context";
+import { cadastrarPidsPorPublisher } from "@/lib/publisher-media-sources";
 import {
   agruparFechamento,
   casarExcel,
@@ -302,66 +303,32 @@ export function ImportarXlsxFechamento({
     }
     setSalvandoPids(true);
     try {
-      // Rele o cadastro NA HORA (nunca usa o snapshot da previa) e remonta a
-      // lista completa de publishers. O PATCH faz replace: manda tudo que o
-      // form de edicao manda, menos caps (omitido = backend nao mexe) e active
-      // (omitido = backend preserva pausa/data/motivo e links por nome).
-      const atual = await carregarCadastro();
-      if (atual.some((p) => !p.nome?.trim())) {
-        // Publisher sem nome nao passa na validacao do PATCH e o replace
-        // derrubaria o resto — nao arrisca; corrige pelo form da campanha.
-        toast.error("Ha publisher sem nome no cadastro — corrija pela edicao da campanha.");
-        return;
-      }
-      const novosPorPub = new Map<string, string[]>();
-      let adicionados = 0;
+      // 1 POST por publisher em /campanhas/publishers/{id}/media-sources: so
+      // ADICIONA os PIDs (ativos), sem recriar os outros publishers/PIDs.
+      // Backend ignora duplicado e devolve 409 se o PID esta em outro publisher.
+      const porPub = new Map<string, { nome: string; names: string[] }>();
       for (const f of selecionados) {
-        const pub = atual.find((p) => p.id === f.publisher_id);
-        if (!pub) continue;
-        const ja = (pub.media_sources ?? []).some(
-          (ms) => normalizarPid(ms.name) === normalizarPid(f.media_source)
-        );
-        const lista = novosPorPub.get(pub.id as string) ?? [];
-        if (ja || lista.some((n) => normalizarPid(n) === normalizarPid(f.media_source)))
-          continue;
-        novosPorPub.set(pub.id as string, [...lista, f.media_source.trim()]);
-        adicionados++;
+        const id = f.publisher_id as string;
+        const g = porPub.get(id) ?? { nome: f.publisher_nome ?? "publisher", names: [] as string[] };
+        if (!g.names.some((n) => normalizarPid(n) === normalizarPid(f.media_source)))
+          g.names.push(f.media_source.trim());
+        porPub.set(id, g);
       }
-      if (adicionados === 0) {
-        toast.info("Nada a cadastrar — os PIDs ja estao no cadastro.");
-        setCadastro(atual);
-        setPidSel(new Set());
-        return;
-      }
-      const payload = {
-        publishers: atual.map((p) => ({
-          nome: p.nome,
-          supplier_id: p.supplier_id ?? null,
-          moeda: p.moeda === "BRL" ? "BRL" : "USD",
-          media_sources: [
-            ...(p.media_sources ?? []).map((ms) => ({
-              name: ms.name,
-              link_ios: ms.link_ios ?? null,
-              link_android: ms.link_android ?? null,
-              link_view_ios: ms.link_view_ios ?? null,
-              link_view_android: ms.link_view_android ?? null
-            })),
-            ...(novosPorPub.get(p.id as string) ?? []).map((name) => ({
-              name,
-              active: true
-            }))
-          ],
-          payouts: (p.payouts ?? []).map((po) => ({
-            evento_nome: po.evento_nome,
-            payout: po.payout
-          }))
+      const r = await cadastrarPidsPorPublisher(
+        Array.from(porPub.entries()).map(([publisherId, g]) => ({
+          publisherId,
+          publisherNome: g.nome,
+          names: g.names
         }))
-      };
-      await apiFetch(`/campanhas/${campanhaId}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload)
-      });
-      toast.success(`${adicionados} PID(s) cadastrado(s) na campanha.`);
+      );
+      if (r.criados > 0) {
+        toast.success(
+          `${r.criados} PID(s) cadastrado(s) na campanha${r.jaExistiam ? ` · ${r.jaExistiam} ja existiam` : ""}.`
+        );
+      } else if (r.jaExistiam > 0 && r.erros.length === 0) {
+        toast.info("Nada a cadastrar — os PIDs ja estao no cadastro.");
+      }
+      for (const msg of r.erros) toast.error(msg);
       setPidSel(new Set());
       setCadastro(await carregarCadastro());
     } catch (e) {
