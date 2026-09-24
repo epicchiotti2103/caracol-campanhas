@@ -178,7 +178,8 @@ export function parseFechamentoWorkbook(
             });
         }
         const n = toNumber(row[iPo]);
-        const valor = n ?? 0;
+        // soma em centavos inteiros — float (0.1 + 0.2) acumula erro em N linhas
+        const valor = n == null ? 0 : Math.round(n * 100);
         const cur = map.get(key);
         if (cur) {
           cur.valor += valor;
@@ -194,12 +195,16 @@ export function parseFechamentoWorkbook(
           });
         }
       }
+      // `valor` no map esta em centavos; converte so na saida
       const publishers = Array.from(map.values()).map((p) => ({
         ...p,
-        valor: Math.round(p.valor * 100) / 100
+        valor: p.valor / 100
       }));
-      const total =
-        Math.round(publishers.reduce((a, p) => a + p.valor, 0) * 100) / 100;
+      const totalCents = Array.from(map.values()).reduce(
+        (a, p) => a + p.valor,
+        0
+      );
+      const total = totalCents / 100;
       return { aba, publishers, total, pares: Array.from(pares.values()) };
     }
   }

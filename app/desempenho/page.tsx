@@ -418,6 +418,7 @@ function DesempenhoDashboard() {
                     key={s.campanha.id}
                     summary={s}
                     isLast={i === filtered.length - 1}
+                    isCurrentMonth={month === currentMonthString()}
                     onOpenFechamento={() => setModalCampanha(s.campanha)}
                   />
                 ))}
@@ -712,16 +713,48 @@ function FilterGroup({
   );
 }
 
+/** "YYYY-MM-DD" local de hoje menos `dias`. */
+function localIsoDate(dias = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() - dias);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+/**
+ * Dados do robo (api_af) atrasados. So vale pra campanha AUTOMATICA
+ * (appsflyer sem coleta_manual), ativa, no mes corrente — o robo puxa ate
+ * ontem, entao report_date < ontem = rodada perdida.
+ *  - "warn": 1 dia de atraso (report_date = anteontem)
+ *  - "late": 2+ dias
+ */
+function roboStaleness(
+  campanha: Campanha,
+  reportDate: string | null,
+  isCurrentMonth: boolean
+): "warn" | "late" | null {
+  if (!isCurrentMonth || !reportDate) return null;
+  if (campanha.status !== "ativa") return null;
+  if (campanha.mmp !== "appsflyer" || campanha.coleta_manual) return null;
+  const rd = reportDate.slice(0, 10);
+  if (rd >= localIsoDate(1)) return null;
+  return rd >= localIsoDate(2) ? "warn" : "late";
+}
+
 function SummaryRow({
   summary,
   isLast,
+  isCurrentMonth,
   onOpenFechamento
 }: {
   summary: CampanhaSummary;
   isLast: boolean;
+  isCurrentMonth: boolean;
   onOpenFechamento: () => void;
 }) {
   const { campanha, row, reportDate, noData, fechamentoStatus } = summary;
+  const stale = roboStaleness(campanha, reportDate, isCurrentMonth);
   const moeda: Moeda | string | null | undefined = campanha.moeda;
   const paceStatus = normalizePaceStatus(row?.pace_status);
   const spend = row?.spend_actual ?? null;
@@ -816,7 +849,21 @@ function SummaryRow({
         </span>
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-xs text-muted">
-        {fmtDateBr(reportDate) || "—"}
+        {stale ? (
+          <span
+            title="Dados do robo desatualizados — ultimo report_date anterior a ontem"
+            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium ${
+              stale === "late"
+                ? "border-red-500/40 bg-red-500/10 text-red-400"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-400"
+            }`}
+          >
+            <AlertCircle className="h-3 w-3" />
+            {fmtDateBr(reportDate)}
+          </span>
+        ) : (
+          fmtDateBr(reportDate) || "—"
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-4">
         <Link

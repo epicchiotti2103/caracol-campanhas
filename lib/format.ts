@@ -169,3 +169,56 @@ export function nextMonthFirstDay(s: string | null | undefined): string {
   }
   return `${year}-${String(month).padStart(2, "0")}-01`;
 }
+
+// ---------------------------------------------------------------------------
+// Datas. Duas semanticas distintas — nao misturar:
+//  - DATA (date-only): `inicio`/`fim`/`paused_at`/`deactivated_at`/`report_date`.
+//    O user digita um dia; a coluna pode ser `timestamptz` gravada a meia-noite
+//    UTC (`2026-08-01T00:00:00+00:00`). Passar pelo `Date` em Brasilia (UTC-3)
+//    daria 31/07 — por isso le os digitos da propria string.
+//  - INSTANTE: `*_registered_at`/`created_at`/`updated_at`/`changed_at`.
+//    Carimbo real, convertido pro fuso local.
+// ---------------------------------------------------------------------------
+
+/**
+ * DATA (date-only) -> "dd/mm/aaaa" lendo os digitos da string ISO, sem fuso.
+ * String fora do padrao ISO cai no `Date` local. `empty` = retorno pra nulo/invalido.
+ */
+export function formatDateOnly(
+  s: string | null | undefined,
+  empty = "—"
+): string {
+  if (!s) return empty;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? empty : d.toLocaleDateString("pt-BR");
+}
+
+/** INSTANTE -> "dd/mm/aaaa" no fuso local. */
+export function formatInstantDate(
+  s: string | null | undefined,
+  empty = "—"
+): string {
+  if (!s) return empty;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? empty : d.toLocaleDateString("pt-BR");
+}
+
+/** INSTANTE -> "dd/mm/aaaa hh:mm:ss" no fuso local. */
+export function formatInstantDateTime(
+  s: string | null | undefined,
+  empty = "—"
+): string {
+  if (!s) return empty;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? empty : d.toLocaleString("pt-BR");
+}
+
+/** INSTANTE -> data curta "06 de jun." no fuso local ("" pra nulo; string crua se invalida). */
+export function formatInstantShort(s: string | null | undefined): string {
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+}

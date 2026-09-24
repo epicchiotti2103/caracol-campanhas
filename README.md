@@ -71,7 +71,7 @@ A UI gateia acoes por **permissoes dinamicas por papel**, nao mais so por `isAdm
 
 ```bash
 cp .env.example .env.local
-# preencha as variaveis (em especial NEXT_PUBLIC_SUPABASE_ANON_KEY do painel Supabase)
+# preencha as variaveis (so API e Hub — o app nao fala com o Supabase direto)
 npm install
 npm run dev
 ```
@@ -84,8 +84,12 @@ App em http://localhost:3000.
 |---|---|
 | `NEXT_PUBLIC_API_URL` | Base do backend (Tracker). Ex: `https://trk.aeobr.com.br`. O config concatena `/api/v1` se faltar. |
 | `NEXT_PUBLIC_HUB_URL` | URL do Hub pra "voltar" e fallbacks. Ex: `https://app.aeobr.com.br` |
-| `NEXT_PUBLIC_SUPABASE_URL` | URL do projeto Supabase compartilhado da suite |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon key do mesmo projeto (pegar no painel Supabase) |
+
+> `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` foram removidas (2026-09-23): nenhum codigo as lia — todo acesso a dados passa pelo backend do Tracker. Se ainda estiverem setadas na Vercel, podem ser apagadas.
+
+## CI
+
+`.github/workflows/ci.yml` roda em push/PR pra `main`: `npm ci` + `npx tsc --noEmit`. Nao bloqueia o deploy da Vercel (que builda por conta propria) — serve de sinal no GitHub.
 
 ## Deploy
 

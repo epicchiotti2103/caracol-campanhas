@@ -144,9 +144,13 @@ Diferente do NF, **nao tem `BootstrapGate`** neste scaffold inicial. Quem chega 
 ```
 NEXT_PUBLIC_API_URL=https://trk.aeobr.com.br
 NEXT_PUBLIC_HUB_URL=https://app.aeobr.com.br
-NEXT_PUBLIC_SUPABASE_URL=https://vdjecbkmukjurhyvprug.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=(painel Supabase)
 ```
+
+(`NEXT_PUBLIC_SUPABASE_*` removidas em 2026-09-23 — nao eram lidas por nenhum codigo.)
+
+CI: `.github/workflows/ci.yml` (npm ci + `npx tsc --noEmit`) em push/PR pra `main`.
+
+Datas: helpers compartilhados em `lib/format.ts` — `formatDateOnly` (DATA digitada: le digitos, sem fuso) vs `formatInstantDate`/`formatInstantDateTime`/`formatInstantShort` (INSTANTE: fuso local). `/desempenho` destaca a data do ultimo report em ambar (1 dia de atraso) / vermelho (2+) pra campanha automatica (appsflyer sem `coleta_manual`), ativa, no mes corrente.
 
 `lib/config.ts` concatena `/api/v1` no `NEXT_PUBLIC_API_URL` automaticamente se faltar.
 

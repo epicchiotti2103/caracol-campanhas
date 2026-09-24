@@ -27,7 +27,8 @@ import {
   formatMesAnoLong,
   parseNumberPtBr,
   sanitizeNumberInput,
-  toMonthString
+  toMonthString,
+  formatDateOnly
 } from "@/lib/format";
 import {
   paceColor,
@@ -236,7 +237,7 @@ function DesempenhoView() {
                 <span>
                   Ultima atualizacao:{" "}
                   <span className="text-foreground">
-                    {fmtDate(latest?.report_date) || "—"}
+                    {formatDateOnly(latest?.report_date)}
                   </span>
                 </span>
               </div>
@@ -490,7 +491,7 @@ function PublishersSection({
               <>
                 — atualizado em{" "}
                 <span className="text-foreground">
-                  {fmtDate(data.report_date)}
+                  {formatDateOnly(data.report_date, "")}
                 </span>
               </>
             )}
@@ -608,9 +609,9 @@ function RawArchivesSection({
                   {wk.week}
                 </span>
                 <span className="text-sm text-foreground">
-                  {fmtDate(wk.date_from)}
+                  {formatDateOnly(wk.date_from, "")}
                   {wk.date_to && wk.date_to !== wk.date_from
-                    ? ` — ${fmtDate(wk.date_to)}`
+                    ? ` — ${formatDateOnly(wk.date_to, "")}`
                     : ""}
                 </span>
               </div>
@@ -1122,13 +1123,6 @@ function EmptyState({
       )}
     </div>
   );
-}
-
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "";
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return s;
 }
 
 function FechamentoButton({

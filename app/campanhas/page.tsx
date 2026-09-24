@@ -27,7 +27,8 @@ import {
   currentMonthString,
   formatCurrency,
   formatMesAnoShort,
-  formatNumberPtBr
+  formatNumberPtBr,
+  formatDateOnly
 } from "@/lib/format";
 import { useCan } from "@/lib/perms-context";
 import type {
@@ -490,10 +491,10 @@ function CampanhaRow({
         {formatMesAnoShort(campanha.mes_referencia) || "—"}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
-        {fmtDate(campanha.inicio)}
+        {formatDateOnly(campanha.inicio)}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 align-top text-muted">
-        {fmtDate(campanha.fim)}
+        {formatDateOnly(campanha.fim)}
       </td>
       <td className="px-3 py-2.5 align-top">
         <p className="font-medium text-foreground">{campanha.name}</p>
@@ -548,14 +549,6 @@ function CampanhaRow({
       </td>
     </tr>
   );
-}
-
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
 
 /** Budget como numero PT-BR sem simbolo — a moeda fica em coluna propria. */
