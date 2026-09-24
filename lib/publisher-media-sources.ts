@@ -27,6 +27,22 @@ export function describeAddMediaSourcesError(e: unknown, publisherNome?: string)
   const alvo = publisherNome ? ` em ${publisherNome}` : "";
   if (isEmImplantacao(e)) return "Cadastro de PIDs em implantacao no backend — tente de novo em instantes.";
   if (e instanceof ApiError && e.status === 409) {
+    // Contrato: detail = {message, conflitos: [{media_source, publisher_id, publisher_nome}]}
+    const d = e.detail as { conflitos?: unknown } | null;
+    const conflitos = d && typeof d === "object" && Array.isArray(d.conflitos)
+      ? (d.conflitos as Array<Record<string, unknown>>)
+      : null;
+    if (conflitos && conflitos.length) {
+      const itens = conflitos
+        .map((c) => {
+          const pid = String(c.media_source ?? "").trim();
+          const pub = String(c.publisher_nome ?? "").trim() || "outro publisher";
+          return pid ? `${pid} ja esta em ${pub}` : "";
+        })
+        .filter(Boolean)
+        .join("; ");
+      return `Nao cadastrado${alvo}: ${itens}. Mova o PID no publisher de origem ou escolha outro publisher.`;
+    }
     const det = describeDetail(e.detail);
     return `Nao cadastrado${alvo}: PID ja pertence a outro publisher desta campanha${det ? ` — ${det}` : ""}.`;
   }

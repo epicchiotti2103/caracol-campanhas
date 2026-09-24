@@ -42,6 +42,20 @@ interface StatusItem {
   publishers_sem_valor: number;
   nf_vinculada: boolean;
   nf_ids: string[];
+  /** Tipado (pagar/receber + numero). Ausente em backend antigo -> fallback nf_ids. */
+  nfs?: NfRef[];
+}
+
+interface NfRef {
+  id: string;
+  tipo: "pagar" | "receber";
+  numero: string | number | null;
+}
+
+function nfHref(nf: NfRef): string {
+  return nf.tipo === "receber"
+    ? `${NF_URL}/receber?id=${encodeURIComponent(nf.id)}`
+    : `${NF_URL}/invoice/${nf.id}`;
 }
 
 interface StatusResponse {
@@ -420,9 +434,26 @@ function Linha({ it, onOpen }: { it: StatusItem; onOpen: () => void }) {
           : formatCurrency(it.spend_final, it.moeda === "BRL" ? "BRL" : "USD")}
       </td>
       <td className="whitespace-nowrap px-4 py-3" onClick={stop}>
-        {it.nf_vinculada ? (
+        {it.nfs && it.nfs.length ? (
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            {it.nfs.map((nf) => (
+              <a
+                key={`${nf.tipo}-${nf.id}`}
+                href={nfHref(nf)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:underline"
+                title={`Abrir NF a ${nf.tipo}`}
+              >
+                NF{nf.numero != null && String(nf.numero).trim() ? ` ${nf.numero}` : ""}
+                <span className="text-muted">· {nf.tipo}</span>
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ))}
+          </div>
+        ) : it.nf_vinculada ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            {(it.nf_ids.length ? it.nf_ids : [null]).map((id, i) =>
+            {((it.nf_ids ?? []).length ? it.nf_ids : [null]).map((id, i) =>
               id ? (
                 <a
                   key={id}

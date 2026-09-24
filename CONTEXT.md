@@ -83,7 +83,7 @@ Todos sob `NEXT_PUBLIC_API_URL` (`https://trk.aeobr.com.br`, com `/api/v1` conca
 - `DELETE /campanhas/{id}` — remove (fase 2, opcional)
 - `GET /campanhas/{id}/users` — gestores (fase 2)
 - `PUT /campanhas/{id}/users/{user_id}` — atribuir gestor (fase 2)
-- `GET /campanhas/fechamento/status?month=YYYY-MM` — painel `/fechamento` (`{month, items:[{campanha_id, codigo, nome, cliente_nome, moeda, coleta, ultimo_report_date, robo_atrasado, pids_nao_cadastrados, fechamento_status: sem|aberto|fechado|travado, spend_final, publishers_total, publishers_sem_valor, nf_vinculada, nf_ids}]}`)
+- `GET /campanhas/fechamento/status?month=YYYY-MM` — painel `/fechamento` (`{month, items:[{campanha_id, codigo, nome, cliente_nome, moeda, coleta, ultimo_report_date, robo_atrasado, pids_nao_cadastrados, fechamento_status: sem|aberto|fechado|travado, spend_final, publishers_total, publishers_sem_valor, nf_vinculada, nf_ids, nfs:[{id, tipo: pagar|receber, numero}]}]}`). Link da NF: pagar → `${NF_URL}/invoice/{id}`, receber → `${NF_URL}/receber?id={id}`; sem `nfs` cai no fallback `nf_ids` (link /invoice). 409 do `POST .../media-sources` = `detail: {message, conflitos:[{media_source, publisher_id, publisher_nome}]}` → "PID ja esta em <publisher>"
 - `GET /campanhas/{id}/pids-nao-cadastrados` — `{items:[{media_source, installs, events_total, events_valid, sugestao_publisher_id, sugestao_motivo}]}`
 - `POST /campanhas/publishers/{publisher_id}/media-sources` — body `{names}` → `{criados, ja_existiam}`; 409 se PID ja esta em outro publisher da campanha
 - `GET /perms/campanhas/me` — `{app, role, permissions:[keys]}` do usuario logado (RBAC dinamico, fase 4.7)
