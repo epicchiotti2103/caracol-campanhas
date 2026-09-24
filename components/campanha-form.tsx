@@ -462,6 +462,11 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
     pids: PidRemovido[];
   } | null>(null);
 
+  // Protecao contra aba velha: o PATCH manda `expected_updated_at` (updated_at
+  // da campanha quando o form carregou) e o backend devolve 409
+  // `campanha_alterada` se alguem salvou depois. Sem opcao de forcar.
+  const [campanhaAlterada, setCampanhaAlterada] = useState(false);
+
   // Remover publisher que ja tem PID salvo pede confirmacao (1 clique no
   // lixinho apagava todos os PIDs dele sem aviso).
   const [confirmRemovePubIdx, setConfirmRemovePubIdx] = useState<number | null>(
@@ -1151,6 +1156,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       apps: cleanApps,
       publishers: cleanPublishers
     };
+    if (isEdit && initial?.updated_at) {
+      payload.expected_updated_at = initial.updated_at;
+    }
 
     await sendPayload(payload);
   };
@@ -1172,6 +1180,11 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           body: JSON.stringify(payload)
         });
       } catch (err) {
+        if (isEdit && isCampanhaAlterada(err)) {
+          setPidRemocao(null);
+          setCampanhaAlterada(true);
+          return;
+        }
         const removidos = isEdit ? parsePidsRemovidos(err) : null;
         if (removidos) {
           setPidRemocao({ payload, pids: removidos });
@@ -2022,6 +2035,8 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         />
       )}
 
+      {campanhaAlterada && <CampanhaAlteradaModal />}
+
       {confirmRemovePubIdx != null && publishers[confirmRemovePubIdx] && (
         <ConfirmRemovePublisherModal
           nome={
@@ -2816,6 +2831,41 @@ function parsePidsRemovidos(err: unknown): PidRemovido[] | null {
     }))
     .filter((r) => r.media_source);
   return out.length ? out : null;
+}
+
+function isCampanhaAlterada(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 409) return false;
+  const d = err.detail as { code?: unknown } | null;
+  return !!d && typeof d === "object" && d.code === "campanha_alterada";
+}
+
+function CampanhaAlteradaModal() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <div className="mb-3 flex items-start gap-2.5">
+          <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-warning" />
+          <h3 className="text-base font-semibold text-foreground">
+            Campanha alterada
+          </h3>
+        </div>
+        <p className="mb-5 text-sm text-muted">
+          Esta campanha foi alterada por outra pessoa/aba desde que voce abriu.
+          Recarregue pra nao sobrescrever. Suas edicoes nesta tela serao
+          descartadas.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+          >
+            Recarregar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ConfirmRemocaoPidsModal({
