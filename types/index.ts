@@ -870,3 +870,25 @@ export interface RawArchivesResponse {
   /** Mais recente primeiro; pode vir vazio. */
   weeks: RawArchiveWeek[];
 }
+
+// Historico de alteracoes (audit_log) — GET /audit?entidade=&entidade_id=
+export type AuditEntidade = "fechamento" | "nf_invoice" | "nf_receivable";
+
+export interface AuditItem {
+  id: string;
+  entidade: AuditEntidade | string;
+  entidade_id: string;
+  acao: string;
+  campo: string | null;
+  valor_antes: unknown;
+  valor_depois: unknown;
+  user_email: string | null;
+  created_at: string;
+}
+
+export interface AuditResponse {
+  items: AuditItem[];
+  total: number;
+  // false = tabela audit_log ainda nao existe (migration 079 pendente)
+  disponivel: boolean;
+}

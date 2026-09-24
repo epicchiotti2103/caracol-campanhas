@@ -20,6 +20,7 @@ import {
 } from "react";
 import {
   AlertCircle,
+  History,
   Loader2,
   Lock,
   Plus,
@@ -46,6 +47,7 @@ import {
   ImportarXlsxFechamento,
   type ImportXlsxUpdate
 } from "@/components/importar-xlsx-fechamento";
+import { HistoricoAuditModal, fetchAudit } from "@/components/historico-audit-modal";
 import type {
   CampanhaCapTipo,
   CampanhaCapUnidade,
@@ -435,6 +437,26 @@ export function CampanhaFechamentoModal({
   const isLocked = fechamento?.is_locked || fechamento?.locked || false;
   const isStub = !fechamento?.id;
   const readOnly = isLocked;
+
+  // ----- Historico (audit_log) -----
+  // So com fechamento salvo (entidade_id = id da linha de
+  // campanhas_fechamento_mensal). Pre-checa acesso: 403 esconde o botao.
+  const fechamentoId = fechamento?.id ?? null;
+  const [historicoPermitido, setHistoricoPermitido] = useState(false);
+  const [historicoOpen, setHistoricoOpen] = useState(false);
+  useEffect(() => {
+    if (!fechamentoId) {
+      setHistoricoPermitido(false);
+      return;
+    }
+    let cancelled = false;
+    fetchAudit("fechamento", fechamentoId).then((r) => {
+      if (!cancelled) setHistoricoPermitido(!r.forbidden);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fechamentoId]);
 
   // Houve pausa no mes? (status_windows.pausas nao vazio). Usado pra avisar
   // quando a exclusao por pausa NAO foi aplicada a um publisher sem base diaria.
@@ -1867,6 +1889,17 @@ export function CampanhaFechamentoModal({
             {readOnly ? "Fechar" : "Cancelar"}
           </button>
 
+          {fechamentoId && historicoPermitido && (
+            <button
+              type="button"
+              onClick={() => setHistoricoOpen(true)}
+              className="mr-auto inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground"
+            >
+              <History className="h-4 w-4" />
+              Historico
+            </button>
+          )}
+
           {/* Lock: aparece quando existe (id != null) e nao locked */}
           {fechamento?.id && !isLocked && (
             <button
@@ -1907,6 +1940,22 @@ export function CampanhaFechamentoModal({
           )}
         </div>
       </div>
+      {historicoOpen && fechamentoId && (
+        <HistoricoAuditModal
+          entidade="fechamento"
+          entidadeId={fechamentoId}
+          subtitulo={`${campanhaNome} · ${formatMesAnoLong(`${month}-01`) || month}`}
+          ctx={{
+            moeda: fechamento?.moeda || moeda,
+            resolve: (campo, valor) =>
+              campo === "client_id"
+                ? clients.find((c) => c.id === valor)?.name ??
+                  (valor === fechamento?.client_id ? fechamento?.client_name : null)
+                : null
+          }}
+          onClose={() => setHistoricoOpen(false)}
+        />
+      )}
     </div>
   );
 }
