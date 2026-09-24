@@ -14,6 +14,7 @@ import {
   Search
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetchStatus } from "@/lib/api-status";
 import { useToast } from "@/lib/toast-context";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
 import { DateOnlyModal } from "@/components/date-only-modal";
@@ -454,6 +455,18 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  // Confirmacao de remocao de PIDs (409 do PATCH): payload pendente + lista.
+  const [pidRemocao, setPidRemocao] = useState<{
+    payload: Record<string, any>;
+    pids: PidRemovido[];
+  } | null>(null);
+
+  // Remover publisher que ja tem PID salvo pede confirmacao (1 clique no
+  // lixinho apagava todos os PIDs dele sem aviso).
+  const [confirmRemovePubIdx, setConfirmRemovePubIdx] = useState<number | null>(
+    null
+  );
 
   // Cap renegociado: quando o user muda o valor de um cap ja vigente, abrimos
   // um modal pedindo a data efetiva da mudanca (igual renegociacao de payout).
@@ -1139,14 +1152,34 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       publishers: cleanPublishers
     };
 
+    await sendPayload(payload);
+  };
+
+  // Envia o payload (POST/PATCH). No PATCH, o backend responde 409 com
+  // `detail.pids_removidos` quando o payload tira PIDs que existem hoje — o
+  // replace total dos publishers apagaria esses PIDs (e o historico de pausa).
+  // Nesse caso abrimos o modal de confirmacao; confirmar reenvia o MESMO payload
+  // com `confirmar_remocao_pids: true`. Backend antigo (sem o 409) segue igual.
+  const sendPayload = async (payload: Record<string, any>) => {
     setSubmitting(true);
     try {
       const endpoint = isEdit ? `/campanhas/${campanhaId}` : "/campanhas";
       const method = isEdit ? "PATCH" : "POST";
-      const saved: { id?: string } = await apiFetch(endpoint, {
-        method,
-        body: JSON.stringify(payload)
-      });
+      let saved: { id?: string };
+      try {
+        saved = await apiFetchStatus(endpoint, {
+          method,
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        const removidos = isEdit ? parsePidsRemovidos(err) : null;
+        if (removidos) {
+          setPidRemocao({ payload, pids: removidos });
+          return;
+        }
+        throw err;
+      }
+      setPidRemocao(null);
 
       toast.success(isEdit ? "Campanha atualizada." : "Campanha criada.");
       if (onSaved) {
@@ -1167,6 +1200,7 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
       setCapRenegPublishers([]);
       setEventoCapReason("");
       setEventoCapRenegEventos([]);
+      setPidRemocao(null);
     } finally {
       setSubmitting(false);
     }
@@ -1756,7 +1790,11 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
                 </p>
                 <button
                   type="button"
-                  onClick={() => removePublisher(pubIdx)}
+                  onClick={() =>
+                    pub.media_sources.some((ms) => ms.id)
+                      ? setConfirmRemovePubIdx(pubIdx)
+                      : removePublisher(pubIdx)
+                  }
                   className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-muted transition-colors hover:border-danger/40 hover:text-danger"
                   title="Remover publisher"
                   aria-label="Remover publisher"
@@ -1960,6 +1998,44 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
             setPendingSubmit(false);
             setCapRenegPublishers([]);
           }}
+        />
+      )}
+
+      {pidRemocao && (
+        <ConfirmRemocaoPidsModal
+          pids={pidRemocao.pids}
+          busy={submitting}
+          onConfirm={() =>
+            void sendPayload({
+              ...pidRemocao.payload,
+              confirmar_remocao_pids: true
+            })
+          }
+          onCancel={() => {
+            setPidRemocao(null);
+            // Nova tentativa re-pergunta data efetiva / motivo de cap.
+            setCapEffectiveDate("");
+            setCapRenegPublishers([]);
+            setEventoCapReason("");
+            setEventoCapRenegEventos([]);
+          }}
+        />
+      )}
+
+      {confirmRemovePubIdx != null && publishers[confirmRemovePubIdx] && (
+        <ConfirmRemovePublisherModal
+          nome={
+            publishers[confirmRemovePubIdx].nome.trim() ||
+            `Publisher ${confirmRemovePubIdx + 1}`
+          }
+          pids={publishers[confirmRemovePubIdx].media_sources
+            .filter((ms) => ms.id && ms.name.trim())
+            .map((ms) => ms.name.trim())}
+          onConfirm={() => {
+            removePublisher(confirmRemovePubIdx);
+            setConfirmRemovePubIdx(null);
+          }}
+          onCancel={() => setConfirmRemovePubIdx(null)}
         />
       )}
 
@@ -2718,6 +2794,153 @@ function Field({
         )}
       </label>
       {children}
+    </div>
+  );
+}
+
+// ---- Confirmacao de remocao de PIDs (409 do PATCH /campanhas/{id}) ----
+// Contrato: detail = {message, pids_removidos: [{publisher_nome, media_source}]}
+interface PidRemovido {
+  publisher_nome: string;
+  media_source: string;
+}
+
+function parsePidsRemovidos(err: unknown): PidRemovido[] | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const d = err.detail as { pids_removidos?: unknown } | null;
+  if (!d || typeof d !== "object" || !Array.isArray(d.pids_removidos)) return null;
+  const out = (d.pids_removidos as Array<Record<string, unknown>>)
+    .map((r) => ({
+      publisher_nome: String(r?.publisher_nome ?? "").trim() || "(sem publisher)",
+      media_source: String(r?.media_source ?? "").trim()
+    }))
+    .filter((r) => r.media_source);
+  return out.length ? out : null;
+}
+
+function ConfirmRemocaoPidsModal({
+  pids,
+  busy,
+  onConfirm,
+  onCancel
+}: {
+  pids: PidRemovido[];
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const porPublisher = new Map<string, string[]>();
+  for (const p of pids) {
+    const arr = porPublisher.get(p.publisher_nome) ?? [];
+    arr.push(p.media_source);
+    porPublisher.set(p.publisher_nome, arr);
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="mb-2 text-base font-semibold text-foreground">
+          Remover {pids.length} PID{pids.length === 1 ? "" : "s"}?
+        </h3>
+        <p className="mb-3 text-sm text-muted">
+          Salvar assim apaga os PIDs abaixo desta campanha (junto com o
+          historico de pausa deles). Se voce nao removeu esses PIDs de
+          proposito, cancele e recarregue a pagina antes de editar.
+        </p>
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+          <span>
+            Para parar de pagar, prefira PAUSAR o PID (mantem vinculo e
+            historico).
+          </span>
+        </div>
+        <div className="mb-4 min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg border border-border bg-background p-3">
+          {Array.from(porPublisher.entries()).map(([pub, list]) => (
+            <div key={pub}>
+              <p className="text-xs font-semibold text-foreground">
+                {pub}{" "}
+                <span className="font-normal text-muted">({list.length})</span>
+              </p>
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {list.map((ms) => (
+                  <li
+                    key={ms}
+                    className="rounded border border-danger/30 bg-danger/10 px-1.5 py-0.5 font-mono text-[11px] text-danger"
+                  >
+                    {ms}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Cancelar (nao salva)
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex items-center gap-2 rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            Remover e salvar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmRemovePublisherModal({
+  nome,
+  pids,
+  onConfirm,
+  onCancel
+}: {
+  nome: string;
+  pids: string[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="mb-2 text-base font-semibold text-foreground">
+          Remover publisher {nome}?
+        </h3>
+        <p className="mb-3 text-sm text-muted">
+          {pids.length} PID{pids.length === 1 ? "" : "s"} salvo
+          {pids.length === 1 ? "" : "s"} sai{pids.length === 1 ? "" : "em"} da
+          campanha ao salvar: {pids.slice(0, 12).join(", ")}
+          {pids.length > 12 ? ` e mais ${pids.length - 12}` : ""}.
+        </p>
+        <p className="mb-4 text-xs text-warning">
+          Para parar de pagar, prefira PAUSAR os PIDs (mantem vinculo e
+          historico).
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:text-foreground"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+          >
+            Remover publisher
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

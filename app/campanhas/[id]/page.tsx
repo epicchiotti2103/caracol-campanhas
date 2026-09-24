@@ -77,6 +77,7 @@ function CampanhaDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
+  const [openingEdit, setOpeningEdit] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -323,8 +324,25 @@ function CampanhaDetail() {
               {can("campanhas.edit") && (
                 <button
                   type="button"
-                  onClick={() => setEditing((v) => !v)}
-                  className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background"
+                  onClick={async () => {
+                    if (editing) {
+                      setEditing(false);
+                      return;
+                    }
+                    // Recarrega antes de abrir o form: o form inicializa o
+                    // estado 1x a partir de `campanha` e o PATCH recria TODOS
+                    // os PIDs. Aba aberta ha horas + PIDs mexidos em outro
+                    // lugar = salvar apagaria o que mudou desde o load.
+                    setOpeningEdit(true);
+                    try {
+                      await reloadCampanha();
+                    } finally {
+                      setOpeningEdit(false);
+                      setEditing(true);
+                    }
+                  }}
+                  disabled={openingEdit}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background disabled:opacity-60"
                 >
                   {editing ? (
                     <>
