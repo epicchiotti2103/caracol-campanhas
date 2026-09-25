@@ -1225,7 +1225,10 @@ function PublishersTable({
             <span className="rounded-md border border-border bg-surface px-2 py-0.5 text-xs font-medium text-muted">
               {moedaLabel(pubMoeda)}
             </span>
-            <PublisherPauseAllButton pub={pub} onReload={onReload} />
+            <div className="ml-auto flex items-center gap-2">
+              <PublisherReactivateAllButton pub={pub} onReload={onReload} />
+              <PublisherPauseAllButton pub={pub} onReload={onReload} />
+            </div>
           </div>
 
           <div>
@@ -1514,6 +1517,117 @@ function MediaSourceRow({
 }
 
 /**
+ * Botao "Reativar todos" no cabecalho do publisher: simetrico ao "Pausar todos".
+ * Nao ha endpoint batch de reativacao, entao reusa o MESMO PATCH da reativacao
+ * individual (`/campanhas/publishers/media-sources/{id}` com
+ * `{ active: true, effective_at }`), um PID pausado por vez. Cada chamada grava
+ * a linha "reativacao" no log de status (migration 051) + audit, e o backend
+ * aplica o fuso da campanha na data (`_effective_ts`), igual ao individual.
+ * Nunca usa o PATCH da campanha (que recria a lista de PIDs).
+ * So aparece quando o publisher tem pelo menos uma media source pausada.
+ */
+function PublisherReactivateAllButton({
+  pub,
+  onReload
+}: {
+  pub: CampanhaPublisher;
+  onReload: () => Promise<void> | void;
+}) {
+  const toast = useToast();
+  const can = useCan();
+  const canEdit = can("campanhas.edit");
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const paused = (pub.media_sources || []).filter((m) => !m.active && m.id);
+  if (!canEdit || !pub.id || paused.length === 0) return null;
+
+  // Backend recusa (400) data de retorno anterior a pausa de cada PID; o minimo
+  // do input e a pausa mais recente entre os pausados (string YYYY-MM-DD, sem Date).
+  const minDate =
+    paused
+      .map((m) => m.deactivated_at?.slice(0, 10) || "")
+      .filter(Boolean)
+      .sort()
+      .pop() || undefined;
+
+  const reactivateAll = async (date: string) => {
+    setBusy(true);
+    let ok = 0;
+    const falhas: string[] = [];
+    try {
+      for (const ms of paused) {
+        try {
+          await apiFetch(`/campanhas/publishers/media-sources/${ms.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ active: true, effective_at: date })
+          });
+          ok++;
+        } catch (err: any) {
+          falhas.push(`${ms.name}: ${err?.message || "erro"}`);
+        }
+      }
+      if (ok > 0) {
+        toast.success(
+          `${ok} media source${ok === 1 ? "" : "s"} reativada${ok === 1 ? "" : "s"}.`
+        );
+      }
+      if (falhas.length > 0) {
+        toast.error(
+          `Falha ao reativar ${falhas.length}: ${falhas.slice(0, 3).join("; ")}${
+            falhas.length > 3 ? "..." : ""
+          }`
+        );
+      } else {
+        setOpen(false);
+      }
+      if (ok > 0) await onReload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={busy}
+        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+        title="Reativar todas as media sources pausadas deste publisher"
+      >
+        {busy ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <RotateCcw className="h-3 w-3" />
+        )}
+        Reativar todos ({paused.length})
+      </button>
+      {open && (
+        <DateOnlyModal
+          title="Reativar todas as media sources"
+          description={
+            <>
+              Reativar as {paused.length} media source
+              {paused.length === 1 ? "" : "s"} pausada
+              {paused.length === 1 ? "" : "s"} de{" "}
+              <span className="font-semibold text-foreground">{pub.nome}</span>.
+              Informe a data de retorno.
+            </>
+          }
+          dateLabel="Data de retorno"
+          confirmLabel="Reativar todos"
+          minDate={minDate}
+          submitting={busy}
+          onConfirm={reactivateAll}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
  * Botao "Pausar todos" no cabecalho do publisher: pausa de uma vez todas as
  * media sources ATIVAS via endpoint batch. Reusa o mesmo ReasonDateModal do
  * pause individual (motivo + data efetiva). So aparece quando o publisher tem
@@ -1566,7 +1680,7 @@ function PublisherPauseAllButton({
         type="button"
         onClick={() => setOpen(true)}
         disabled={busy}
-        className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
         title="Pausar todas as media sources ativas deste publisher"
       >
         {busy ? (
