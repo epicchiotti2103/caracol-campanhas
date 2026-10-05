@@ -49,6 +49,7 @@ caracol-campanhas/
       page.tsx                   Painel "Fechamento do mes" (o que falta pra fechar cada campanha)
   components/
     app-shell.tsx                Layout com navbar
+    assist-widget.tsx            Chatbot flutuante de ajuda (REPLICADO nos 5 apps — copia exata do Hub; POST /assist/chat). Montado no app/layout.tsx com app="campanhas"
     bootstrap-gate.tsx           Gate de acesso via /hub/me/apps (nao bloqueia o shell — checa em background; so toma a tela em no-app/error)
     campanha-form.tsx            Form unico usado em new e edicao inline
     navbar.tsx                   Navbar com logo do Hub e nav de campanhas
@@ -211,6 +212,7 @@ Datas: helpers compartilhados em `lib/format.ts` — `formatDateOnly` (DATA digi
 - [x] **Fase 4.34 — protecao contra aba velha no form** (24/09, slug `form-aba-velha`): PATCH do form manda `expected_updated_at` = `updated_at` da campanha carregada. Backend responde `409 {detail:{code:"campanha_alterada", message, updated_at}}` se a campanha mudou depois (tolerancia 1ms; checado antes do `pids_removidos`). Form abre `CampanhaAlteradaModal` com so **Recarregar** (`window.location.reload()`, descarta a edicao) — sem opcao de forcar. Toggle de media source dentro do form nao mexe em `campanhas.updated_at`, entao nao gera falso positivo.
 - [x] **Fase 4.35 — "Reativar todos" do publisher** (25/09, slug `reativar-todos-pids`): no cabecalho de cada publisher do detalhe (`app/campanhas/[id]/page.tsx`, `PublisherReactivateAllButton`, ao lado do "Pausar todos") aparece **"Reativar todos (N)"** quando ha >=1 PID pausado (o "Pausar todos" segue so com >=1 ativo). Abre o `DateOnlyModal` ("Data de retorno", default hoje, `min` = pausa mais recente entre os pausados) e, como NAO existe endpoint batch de reativacao, chama em sequencia o MESMO `PATCH /campanhas/publishers/media-sources/{ms_id}` `{active: true, effective_at}` da reativacao individual, so pros PIDs pausados — cada chamada grava `reativacao` no `campanhas_media_source_status_log` + audit, fuso via `_effective_ts` no backend. Nunca usa o PATCH da campanha. Falha parcial: toast com os PIDs que falharam, modal fica aberto, recarrega o que deu certo.
 
+- [x] **Widget de ajuda da suite** (05/10, slug `assist-widget`): `components/assist-widget.tsx` copiado byte a byte do Hub e montado no `app/layout.tsx` dentro do `AuthProvider` (`<AssistWidget app="campanhas" />`). Some em telas de auth e sem user. Backend `POST /api/v1/assist/chat` e job do `tracker`.
 - [ ] **Fase 5 — integracao com NF**: NF passa a usar dropdown de campanhas em vez de texto livre; FK `nf_invoices.campanha_id` + backfill
 
 ## Decisoes tomadas
