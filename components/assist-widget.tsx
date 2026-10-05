@@ -5,16 +5,27 @@
  *
  * Arquivo autocontido e replicado nos 5 apps (hub, tracker, nf, campanhas, gerencial).
  * Mudou aqui? Replique nos outros 4. Dependencias: react, next/navigation,
- * lucide-react, @/lib/api (apiFetch), @/lib/auth-context (useAuth) e os tokens
- * Tailwind da suite (background, foreground, surface, muted, border, primary, danger).
+ * lucide-react, js-cookie, @/lib/config (API_BASE_URL), @/lib/api (apiFetch),
+ * @/lib/auth-context (useAuth) e os tokens Tailwind da suite (background,
+ * foreground, surface, muted, border, primary, danger).
  *
- * Backend: POST /api/v1/assist/chat  { app, path, messages } -> { reply }
+ * Backend:
+ *   POST /api/v1/assist/chat/stream { app, path, messages } -> text/event-stream
+ *     eventos `data: <json>`: {type:"status",text} | {type:"delta",text} |
+ *     {type:"done"} | {type:"error",detail}
+ *   POST /api/v1/assist/chat        { app, path, messages } -> { reply }  (fallback)
+ *
+ * Fluxo: tenta o stream via fetch direto. Se o fetch falhar, a resposta nao for ok
+ * (inclui 401 e 404) ou nao for event-stream, refaz pela rota antiga via apiFetch
+ * (que trata refresh de token). Excecao: 429/403/503 com `detail` -> erro direto.
  */
 
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Loader2, Send, Trash2, X } from "lucide-react";
+import Cookies from "js-cookie";
 import { apiFetch } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/config";
 import { useAuth } from "@/lib/auth-context";
 
 export type AssistApp = "hub" | "tracker" | "nf" | "campanhas" | "gerencial";
@@ -85,6 +96,93 @@ function friendlyError(err: unknown): string {
     return "Sessao expirada. Faca login de novo.";
   }
   return "Nao consegui responder agora. Tenta de novo em instantes.";
+}
+
+function errorForStatus(status: number): string | null {
+  if (status === 429) return "Muitas perguntas seguidas, tenta de novo em alguns minutos.";
+  if (status === 403) return "Voce nao tem acesso ao assistente.";
+  if (status === 503) return "Assistente indisponivel no momento. Tenta de novo mais tarde.";
+  return null;
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
+
+// ---------- streaming SSE ----------
+
+type StreamEvent =
+  | { type: "status"; text: string }
+  | { type: "delta"; text: string }
+  | { type: "done" }
+  | { type: "error"; detail: string };
+
+/** Erro que deve ser mostrado direto (sem fallback pra rota antiga). */
+class DirectError extends Error {}
+
+/** Erro com mensagem ja amigavel, mostrada como esta. */
+class ShownError extends Error {}
+
+/** Sinaliza que o stream nao pode ser usado e a rota antiga deve ser tentada. */
+class FallbackSignal extends Error {}
+
+function parseEventBlock(block: string): StreamEvent | null {
+  const data: string[] = [];
+  for (const line of block.split("\n")) {
+    if (!line.startsWith("data:")) continue; // ignora comentarios (":"), event:, id:
+    let v = line.slice(5);
+    if (v.startsWith(" ")) v = v.slice(1);
+    data.push(v);
+  }
+  if (data.length === 0) return null;
+  try {
+    const obj = JSON.parse(data.join("\n"));
+    if (!obj || typeof obj.type !== "string") return null;
+    return obj as StreamEvent;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Le o corpo SSE e chama onEvent pra cada evento. Robusto a eventos quebrados
+ * entre chunks (acumula em buffer ate achar a linha em branco separadora).
+ */
+async function readSSE(body: ReadableStream<Uint8Array>, onEvent: (ev: StreamEvent) => void) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const flush = (final: boolean) => {
+    buffer = buffer.replace(/\r\n?/g, "\n");
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const ev = parseEventBlock(block);
+      if (ev) onEvent(ev);
+    }
+    if (final && buffer.trim()) {
+      const ev = parseEventBlock(buffer);
+      buffer = "";
+      if (ev) onEvent(ev);
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      flush(false);
+    }
+    buffer += decoder.decode();
+    flush(true);
+  } catch (err) {
+    reader.cancel().catch(() => {}); // fecha a conexao (erro do servidor ou abort)
+    throw err;
+  }
 }
 
 // ---------- markdown minimo e seguro (so nos React, sem HTML cru) ----------
@@ -245,9 +343,29 @@ export function AssistWidget({ app }: { app: AssistApp }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  // resposta em andamento (stream): status antes do 1o delta, depois o texto crescendo
+  const [live, setLive] = useState<{ status: string | null; text: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const reqIdRef = useRef(0);
+  const stickRef = useRef(true); // acompanha o fim enquanto o usuario nao rolar pra cima
+
+  function abortCurrent() {
+    reqIdRef.current++; // invalida qualquer atualizacao pendente da requisicao anterior
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setLive(null);
+    setPending(false);
+  }
+
+  useEffect(() => {
+    return () => {
+      reqIdRef.current++;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     setMessages(loadHistory(app));
@@ -260,17 +378,29 @@ export function AssistWidget({ app }: { app: AssistApp }) {
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, pending, error, open]);
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+  }, [messages, pending, error, open, live]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
+    if (open) {
+      stickRef.current = true;
+      inputRef.current?.focus();
+    }
   }, [open]);
+
+  function onScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  }
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        abortCurrent();
+        setOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -288,26 +418,74 @@ export function AssistWidget({ app }: { app: AssistApp }) {
     setInput("");
     setError(null);
     setPending(true);
+    setLive({ status: null, text: "" });
+    stickRef.current = true;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const myId = ++reqIdRef.current;
+    const alive = () => reqIdRef.current === myId;
+    const body = JSON.stringify({ app, path: pathname, messages: next.slice(-MAX_HISTORY) });
+
+    let acc = "";
     try {
-      const data = await apiFetch("/assist/chat", {
-        method: "POST",
-        body: JSON.stringify({ app, path: pathname, messages: next.slice(-MAX_HISTORY) })
-      });
-      const reply = typeof data?.reply === "string" ? data.reply.trim() : "";
-      if (!reply) throw new Error("resposta vazia");
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      try {
+        await streamChat(body, controller.signal, (ev) => {
+          if (!alive()) return;
+          if (ev.type === "status") {
+            if (!acc) setLive({ status: String(ev.text ?? ""), text: "" });
+          } else if (ev.type === "delta") {
+            acc += String(ev.text ?? "");
+            setLive({ status: null, text: acc });
+          } else if (ev.type === "error") {
+            throw new DirectError(String(ev.detail ?? ""));
+          }
+        });
+        if (!alive()) return;
+        const reply = acc.trim();
+        if (!reply) throw new DirectError("resposta vazia");
+        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      } catch (err) {
+        if (!(err instanceof FallbackSignal)) throw err;
+        if (!alive()) return;
+        // rota antiga (trata refresh de token e erros por `detail`)
+        const data = await apiFetch("/assist/chat", {
+          method: "POST",
+          body,
+          signal: controller.signal
+        });
+        if (!alive()) return;
+        const reply = typeof data?.reply === "string" ? data.reply.trim() : "";
+        if (!reply) throw new Error("resposta vazia");
+        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      }
     } catch (err) {
-      setError(friendlyError(err));
+      if (!alive() || isAbortError(err)) return;
+      // erro no meio do stream: mantem o que ja veio e acrescenta o erro
+      const partial = acc.trim();
+      if (partial) setMessages((prev) => [...prev, { role: "assistant", content: partial }]);
+      setError(err instanceof ShownError ? err.message : friendlyError(err));
     } finally {
-      setPending(false);
-      inputRef.current?.focus();
+      if (alive()) {
+        abortRef.current = null;
+        setLive(null);
+        setPending(false);
+        inputRef.current?.focus();
+      }
     }
   }
 
   function clear() {
+    abortCurrent();
     setMessages([]);
     setError(null);
     setInput("");
+  }
+
+  function close() {
+    abortCurrent();
+    setOpen(false);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -357,7 +535,7 @@ export function AssistWidget({ app }: { app: AssistApp }) {
               </button>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 aria-label="Fechar ajuda"
                 title="Fechar"
                 className="rounded p-1.5 text-muted transition hover:bg-background hover:text-foreground"
@@ -367,17 +545,22 @@ export function AssistWidget({ app }: { app: AssistApp }) {
             </div>
           </div>
 
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm">
+          <div ref={scrollRef} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm">
             <Bubble role="assistant" content={GREETING} />
             {messages.map((m, idx) => (
               <Bubble key={idx} role={m.role} content={m.content} />
             ))}
-            {pending && (
-              <div className="flex items-center gap-2 text-xs text-muted">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                pensando…
-              </div>
-            )}
+            {pending &&
+              (live && live.text ? (
+                <Bubble role="assistant" content={live.text} />
+              ) : (
+                <div className="flex justify-start">
+                  <div className="flex max-w-[90%] items-center gap-2 rounded-2xl rounded-bl-sm border border-border bg-surface px-3 py-2 text-xs italic text-muted">
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                    <span>{live?.status || "pensando…"}</span>
+                  </div>
+                </div>
+              ))}
             {error && (
               <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
                 {error}
@@ -413,6 +596,52 @@ export function AssistWidget({ app }: { app: AssistApp }) {
       )}
     </>
   );
+}
+
+/**
+ * Faz o POST no endpoint de stream e repassa os eventos. Lanca FallbackSignal quando
+ * a rota antiga deve ser usada, DirectError pra 429/403/503 com `detail`.
+ */
+async function streamChat(body: string, signal: AbortSignal, onEvent: (ev: StreamEvent) => void) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream"
+  };
+  const token = Cookies.get("auth_token");
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/assist/chat/stream`, { method: "POST", headers, body, signal });
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    throw new FallbackSignal("fetch falhou");
+  }
+
+  if (!res.ok) {
+    const direct = errorForStatus(res.status);
+    if (direct) {
+      const data = await res.json().catch(() => null);
+      if (data && typeof data.detail === "string" && data.detail) throw new ShownError(direct);
+    }
+    throw new FallbackSignal(`HTTP ${res.status}`);
+  }
+
+  const ctype = res.headers.get("content-type") || "";
+  if (!ctype.includes("text/event-stream") || !res.body) {
+    res.body?.cancel().catch(() => {});
+    throw new FallbackSignal("nao e event-stream");
+  }
+
+  let finished = false;
+  await readSSE(res.body, (ev) => {
+    if (finished) return;
+    if (ev.type === "done") {
+      finished = true;
+      return;
+    }
+    onEvent(ev);
+  });
 }
 
 function Bubble({ role, content }: ChatMessage) {
