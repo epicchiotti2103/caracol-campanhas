@@ -13,7 +13,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { HelpCircle, Loader2, Send, Trash2, X } from "lucide-react";
+import { Loader2, Send, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -325,9 +325,10 @@ export function AssistWidget({ app }: { app: AssistApp }) {
           onClick={() => setOpen(true)}
           aria-label="Abrir ajuda"
           title="Ajuda Caracol"
-          className="fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:brightness-110"
+          className="fixed bottom-4 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full border border-border bg-white shadow-lg transition hover:scale-105"
         >
-          <HelpCircle className="h-6 w-6" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/assist-caracol.png" alt="" className="h-11 w-11" />
         </button>
       )}
 
@@ -339,7 +340,8 @@ export function AssistWidget({ app }: { app: AssistApp }) {
         >
           <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
             <div className="flex items-center gap-2">
-              <HelpCircle className="h-4 w-4 text-primary" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/assist-caracol.png" alt="" className="h-6 w-6" />
               <span className="text-sm font-semibold">Ajuda Caracol</span>
             </div>
             <div className="flex items-center gap-1">
