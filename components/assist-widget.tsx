@@ -12,8 +12,12 @@
  * Backend:
  *   POST /api/v1/assist/chat/stream { app, path, messages } -> text/event-stream
  *     eventos `data: <json>`: {type:"status",text} | {type:"delta",text} |
- *     {type:"done"} | {type:"error",detail}
- *   POST /api/v1/assist/chat        { app, path, messages } -> { reply }  (fallback)
+ *     {type:"done", resposta_id?, origem?} | {type:"error",detail}
+ *   POST /api/v1/assist/chat        { app, path, messages } -> { reply, resposta_id?, origem? }  (fallback)
+ *   POST /api/v1/assist/feedback    { resposta_id, voto: 1 | -1 } -> { ok: true }
+ *
+ * `origem`: "modelo" (gerada agora) | "arquivo" (resposta salva de pergunta igual).
+ * Sem `resposta_id` (backend antigo / resposta de bloqueio) nao mostra 👍/👎.
  *
  * Fluxo: tenta o stream via fetch direto. Se o fetch falhar, a resposta nao for ok
  * (inclui 401 e 404) ou nao for event-stream, refaz pela rota antiga via apiFetch
@@ -22,7 +26,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Loader2, Send, Trash2, X } from "lucide-react";
+import { Loader2, Send, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
 import Cookies from "js-cookie";
 import { apiFetch } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
@@ -31,9 +35,32 @@ import { useAuth } from "@/lib/auth-context";
 export type AssistApp = "hub" | "tracker" | "nf" | "campanhas" | "gerencial";
 
 type Role = "user" | "assistant";
+type RespostaId = string | number;
+type Voto = 1 | -1;
 interface ChatMessage {
   role: Role;
   content: string;
+  /** so em resposta do bot vinda de backend novo */
+  resposta_id?: RespostaId;
+  origem?: string;
+  voto?: Voto;
+}
+
+interface ReplyMeta {
+  resposta_id?: RespostaId;
+  origem?: string;
+}
+
+function readMeta(obj: unknown): ReplyMeta {
+  const meta: ReplyMeta = {};
+  if (!obj || typeof obj !== "object") return meta;
+  const o = obj as Record<string, unknown>;
+  const id = o.resposta_id;
+  if ((typeof id === "string" && id) || (typeof id === "number" && Number.isFinite(id))) {
+    meta.resposta_id = id;
+  }
+  if (typeof o.origem === "string" && o.origem) meta.origem = o.origem;
+  return meta;
 }
 
 const GREETING = "Oi! Pergunte como usar qualquer tela da suite.";
@@ -53,12 +80,17 @@ function loadHistory(app: AssistApp): ChatMessage[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (m): m is ChatMessage =>
-        m &&
-        (m.role === "user" || m.role === "assistant") &&
-        typeof m.content === "string"
-    );
+    const out: ChatMessage[] = [];
+    for (const m of parsed) {
+      if (!m || (m.role !== "user" && m.role !== "assistant") || typeof m.content !== "string") continue;
+      const msg: ChatMessage = { role: m.role, content: m.content };
+      if (m.role === "assistant") {
+        Object.assign(msg, readMeta(m));
+        if (msg.resposta_id !== undefined && (m.voto === 1 || m.voto === -1)) msg.voto = m.voto;
+      }
+      out.push(msg);
+    }
+    return out;
   } catch {
     return [];
   }
@@ -117,7 +149,7 @@ function isAbortError(err: unknown): boolean {
 type StreamEvent =
   | { type: "status"; text: string }
   | { type: "delta"; text: string }
-  | { type: "done" }
+  | { type: "done"; resposta_id?: RespostaId; origem?: string }
   | { type: "error"; detail: string };
 
 /** Erro que deve ser mostrado direto (sem fallback pra rota antiga). */
@@ -345,6 +377,10 @@ export function AssistWidget({ app }: { app: AssistApp }) {
   const [hydrated, setHydrated] = useState(false);
   // resposta em andamento (stream): status antes do 1o delta, depois o texto crescendo
   const [live, setLive] = useState<{ status: string | null; text: string } | null>(null);
+  // feedback: votos em voo e "Obrigado!" temporario (chave = String(resposta_id))
+  const [voting, setVoting] = useState<Record<string, true>>({});
+  const [thanks, setThanks] = useState<string | null>(null);
+  const thanksTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -364,6 +400,7 @@ export function AssistWidget({ app }: { app: AssistApp }) {
     return () => {
       reqIdRef.current++;
       abortRef.current?.abort();
+      if (thanksTimer.current) clearTimeout(thanksTimer.current);
     };
   }, []);
 
@@ -426,12 +463,14 @@ export function AssistWidget({ app }: { app: AssistApp }) {
     abortRef.current = controller;
     const myId = ++reqIdRef.current;
     const alive = () => reqIdRef.current === myId;
-    const body = JSON.stringify({ app, path: pathname, messages: next.slice(-MAX_HISTORY) });
+    // so role/content vao pro backend (resposta_id/origem/voto ficam no cliente)
+    const history = next.slice(-MAX_HISTORY).map((m) => ({ role: m.role, content: m.content }));
+    const body = JSON.stringify({ app, path: pathname, messages: history });
 
     let acc = "";
     try {
       try {
-        await streamChat(body, controller.signal, (ev) => {
+        const meta = await streamChat(body, controller.signal, (ev) => {
           if (!alive()) return;
           if (ev.type === "status") {
             if (!acc) setLive({ status: String(ev.text ?? ""), text: "" });
@@ -445,7 +484,7 @@ export function AssistWidget({ app }: { app: AssistApp }) {
         if (!alive()) return;
         const reply = acc.trim();
         if (!reply) throw new DirectError("resposta vazia");
-        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+        setMessages((prev) => [...prev, { role: "assistant", content: reply, ...meta }]);
       } catch (err) {
         if (!(err instanceof FallbackSignal)) throw err;
         if (!alive()) return;
@@ -458,7 +497,7 @@ export function AssistWidget({ app }: { app: AssistApp }) {
         if (!alive()) return;
         const reply = typeof data?.reply === "string" ? data.reply.trim() : "";
         if (!reply) throw new Error("resposta vazia");
-        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+        setMessages((prev) => [...prev, { role: "assistant", content: reply, ...readMeta(data) }]);
       }
     } catch (err) {
       if (!alive() || isAbortError(err)) return;
@@ -473,6 +512,36 @@ export function AssistWidget({ app }: { app: AssistApp }) {
         setPending(false);
         inputRef.current?.focus();
       }
+    }
+  }
+
+  async function vote(id: RespostaId, voto: Voto) {
+    const key = String(id);
+    if (voting[key]) return;
+    const target = messages.find((m) => m.role === "assistant" && m.resposta_id === id);
+    if (!target || target.voto !== undefined) return;
+    const setVoto = (v: Voto | undefined) =>
+      setMessages((prev) =>
+        prev.map((m) => (m.role === "assistant" && m.resposta_id === id ? { ...m, voto: v } : m))
+      );
+    setVoting((p) => ({ ...p, [key]: true }));
+    setVoto(voto); // otimista
+    try {
+      await apiFetch("/assist/feedback", {
+        method: "POST",
+        body: JSON.stringify({ resposta_id: id, voto })
+      });
+      if (thanksTimer.current) clearTimeout(thanksTimer.current);
+      setThanks(key);
+      thanksTimer.current = setTimeout(() => setThanks(null), 2000);
+    } catch {
+      setVoto(undefined); // volta ao estado anterior, sem barulho
+    } finally {
+      setVoting((p) => {
+        const n = { ...p };
+        delete n[key];
+        return n;
+      });
     }
   }
 
@@ -547,9 +616,45 @@ export function AssistWidget({ app }: { app: AssistApp }) {
 
           <div ref={scrollRef} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm">
             <Bubble role="assistant" content={GREETING} />
-            {messages.map((m, idx) => (
-              <Bubble key={idx} role={m.role} content={m.content} />
-            ))}
+            {messages.map((m, idx) => {
+              if (m.role !== "assistant" || m.resposta_id === undefined) {
+                return <Bubble key={idx} role={m.role} content={m.content} />;
+              }
+              const id = m.resposta_id;
+              const key = String(id);
+              const locked = m.voto !== undefined || !!voting[key];
+              return (
+                <div key={idx} className="space-y-1">
+                  {m.origem === "arquivo" && (
+                    <div className="pl-1 text-[10px] text-muted">Resposta salva · se não ajudou, clique 👎</div>
+                  )}
+                  <Bubble role="assistant" content={m.content} />
+                  <div className="flex items-center gap-1 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => void vote(id, 1)}
+                      disabled={locked}
+                      aria-label="Resposta ajudou"
+                      title="Ajudou"
+                      className="rounded p-1 text-muted transition hover:text-foreground disabled:cursor-default disabled:hover:text-muted"
+                    >
+                      <ThumbsUp className="h-3.5 w-3.5" fill={m.voto === 1 ? "currentColor" : "none"} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void vote(id, -1)}
+                      disabled={locked}
+                      aria-label="Resposta nao ajudou"
+                      title="Nao ajudou"
+                      className="rounded p-1 text-muted transition hover:text-foreground disabled:cursor-default disabled:hover:text-muted"
+                    >
+                      <ThumbsDown className="h-3.5 w-3.5" fill={m.voto === -1 ? "currentColor" : "none"} />
+                    </button>
+                    {thanks === key && <span className="text-[10px] text-muted">Obrigado!</span>}
+                  </div>
+                </div>
+              );
+            })}
             {pending &&
               (live && live.text ? (
                 <Bubble role="assistant" content={live.text} />
@@ -602,7 +707,11 @@ export function AssistWidget({ app }: { app: AssistApp }) {
  * Faz o POST no endpoint de stream e repassa os eventos. Lanca FallbackSignal quando
  * a rota antiga deve ser usada, DirectError pra 429/403/503 com `detail`.
  */
-async function streamChat(body: string, signal: AbortSignal, onEvent: (ev: StreamEvent) => void) {
+async function streamChat(
+  body: string,
+  signal: AbortSignal,
+  onEvent: (ev: StreamEvent) => void
+): Promise<ReplyMeta> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "text/event-stream"
@@ -634,17 +743,20 @@ async function streamChat(body: string, signal: AbortSignal, onEvent: (ev: Strea
   }
 
   let finished = false;
+  let meta: ReplyMeta = {};
   await readSSE(res.body, (ev) => {
     if (finished) return;
     if (ev.type === "done") {
       finished = true;
+      meta = readMeta(ev);
       return;
     }
     onEvent(ev);
   });
+  return meta;
 }
 
-function Bubble({ role, content }: ChatMessage) {
+function Bubble({ role, content }: { role: Role; content: string }) {
   const isUser = role === "user";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
