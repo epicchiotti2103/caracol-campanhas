@@ -61,6 +61,30 @@ async function refreshAccessToken(): Promise<string | null> {
   return refreshPromise;
 }
 
+// Sessao caiu de vez (refresh falhou): em vez de redirecionar pra /login e
+// perder o que esta na tela, pede re-login num modal (SessionExpiredModal) e
+// re-executa a request original. Todas as requests que derem 401 nesse meio
+// tempo esperam o MESMO re-login. Sem modal montado, cai no redirect antigo.
+let reloginPromise: Promise<string | null> | null = null;
+
+function waitForRelogin(): Promise<string | null> {
+  if (typeof window === "undefined" || !(window as any).__caracolSessionModal) {
+    return Promise.resolve(null);
+  }
+  if (!reloginPromise) {
+    reloginPromise = new Promise((resolve) => {
+      const onRestored = (e: Event) => {
+        window.removeEventListener("caracol:session-restored", onRestored);
+        reloginPromise = null;
+        resolve(((e as CustomEvent).detail?.token as string | undefined) ?? null);
+      };
+      window.addEventListener("caracol:session-restored", onRestored);
+      window.dispatchEvent(new CustomEvent("caracol:session-expired"));
+    });
+  }
+  return reloginPromise;
+}
+
 export async function apiFetch(
   endpoint: string,
   options: RequestInit = {},
@@ -78,10 +102,19 @@ export async function apiFetch(
 
   if (response.status === 401) {
     if (!_isRetry) {
+      // Outra aba/app ja renovou (cookie compartilhado): so repete.
+      const current = Cookies.get("auth_token");
+      if (current && current !== token) {
+        return apiFetch(endpoint, options, true);
+      }
       const newToken = await refreshAccessToken();
       if (newToken) {
         return apiFetch(endpoint, options, true);
       }
+    }
+    const reloggedToken = await waitForRelogin();
+    if (reloggedToken) {
+      return apiFetch(endpoint, options, true);
     }
     clearAuth();
     if (typeof window !== "undefined") {

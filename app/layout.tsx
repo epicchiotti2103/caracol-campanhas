@@ -5,6 +5,7 @@ import { PermsProvider } from "@/lib/perms-context";
 import { ToastProvider } from "@/lib/toast-context";
 import { BootstrapGate } from "@/components/bootstrap-gate";
 import { AssistWidget } from "@/components/assist-widget";
+import { SessionExpiredModal } from "@/components/session-expired-modal";
 
 export const metadata: Metadata = {
   title: "Caracol Campanhas",
@@ -26,6 +27,7 @@ export default function RootLayout({
             </ToastProvider>
           </PermsProvider>
           <AssistWidget app="campanhas" />
+          <SessionExpiredModal />
         </AuthProvider>
       </body>
     </html>
