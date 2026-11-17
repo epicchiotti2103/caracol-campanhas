@@ -48,11 +48,11 @@ caracol-campanhas/
     fechamento/
       page.tsx                   Painel "Fechamento do mes" (o que falta pra fechar cada campanha)
   components/
-    app-shell.tsx                Layout com navbar
+    app-shell.tsx                Layout com sidebar recolhivel (estado em localStorage)
     assist-widget.tsx            Chatbot flutuante de ajuda (REPLICADO nos 5 apps — copia exata do Hub; POST /assist/chat). Montado no app/layout.tsx com app="campanhas"
     bootstrap-gate.tsx           Gate de acesso via /hub/me/apps (nao bloqueia o shell — checa em background; so toma a tela em no-app/error)
     campanha-form.tsx            Form unico usado em new e edicao inline
-    navbar.tsx                   Navbar com logo do Hub e nav de campanhas
+    sidebar.tsx                  Sidebar recolhivel (desktop) + drawer mobile; Papeis so admin
     pids-nao-cadastrados.tsx     Bloco do detalhe: PIDs do robo fora do cadastro + cadastrar por publisher
     status-badge.tsx             Badge de status da campanha
   lib/
@@ -87,6 +87,11 @@ Todos sob `NEXT_PUBLIC_API_URL` (`https://trk.aeobr.com.br`, com `/api/v1` conca
 - `GET /campanhas/fechamento/status?month=YYYY-MM` — painel `/fechamento` (`{month, items:[{campanha_id, codigo, nome, cliente_nome, moeda, coleta, ultimo_report_date, robo_atrasado, pids_nao_cadastrados, fechamento_status: sem|aberto|fechado|travado, spend_final, publishers_total, publishers_sem_valor, nf_vinculada, nf_ids, nfs:[{id, tipo: pagar|receber, numero}]}]}`). Link da NF: pagar → `${NF_URL}/invoice/{id}`, receber → `${NF_URL}/receber?id={id}`; sem `nfs` cai no fallback `nf_ids` (link /invoice). 409 do `POST .../media-sources` = `detail: {message, conflitos:[{media_source, publisher_id, publisher_nome}]}` → "PID ja esta em <publisher>"
 - `GET /campanhas/{id}/pids-nao-cadastrados` — `{items:[{media_source, installs, events_total, events_valid, sugestao_publisher_id, sugestao_motivo}]}`
 - `POST /campanhas/publishers/{publisher_id}/media-sources` — body `{names}` → `{criados, ja_existiam}`; 409 se PID ja esta em outro publisher da campanha
+- `GET /campanhas/envios?campanha_id&publisher_id&supplier_id&status&modo&de&ate&q&limit&offset` — `{items: Envio[], total, disponivel}` (Inicio Campanha; `lib/inicio-campanha.ts`)
+- `PATCH /campanhas/envios/{id}/status` — body `{status, nota?}` → `Envio`
+- `GET /campanhas/{id}/oferta-template` — `{template|null, origem: proprio|mes_anterior|sugestao, sugestao}`; `PUT` mesmo path com as 11 chaves do template
+- `GET /campanhas/{id}/inicio/prefill?publisher_id=` — `{po, moeda, af_prts, supplier_id, supplier_nome, destinatarios, budget_anterior, budget_anterior_fonte, campanha_anterior_id}`
+- `POST /campanhas/{id}/envios` — body `{publisher_id?, publisher_nome, supplier_id?, modo, destinatarios, cc, assunto, corpo, po?, af_prt?, budget_events?, observacao?, canal}` (status default no backend: nova→oferecido, reinicio→enviado)
 - `GET /perms/campanhas/me` — `{app, role, permissions:[keys]}` do usuario logado (RBAC dinamico, fase 4.7)
 - `GET /perms/campanhas/matrix` (admin) — `{roles, catalog:[{key,label,group}], matrix:{role:{key:bool}}}`
 - `PUT /perms/campanhas/matrix` (admin) — body `{matrix:{role:{key:bool}}}`
@@ -213,13 +218,14 @@ Datas: helpers compartilhados em `lib/format.ts` — `formatDateOnly` (DATA digi
 - [x] **Fase 4.35 — "Reativar todos" do publisher** (25/09, slug `reativar-todos-pids`): no cabecalho de cada publisher do detalhe (`app/campanhas/[id]/page.tsx`, `PublisherReactivateAllButton`, ao lado do "Pausar todos") aparece **"Reativar todos (N)"** quando ha >=1 PID pausado (o "Pausar todos" segue so com >=1 ativo). Abre o `DateOnlyModal` ("Data de retorno", default hoje, `min` = pausa mais recente entre os pausados) e, como NAO existe endpoint batch de reativacao, chama em sequencia o MESMO `PATCH /campanhas/publishers/media-sources/{ms_id}` `{active: true, effective_at}` da reativacao individual, so pros PIDs pausados — cada chamada grava `reativacao` no `campanhas_media_source_status_log` + audit, fuso via `_effective_ts` no backend. Nunca usa o PATCH da campanha. Falha parcial: toast com os PIDs que falharam, modal fica aberto, recarrega o que deu certo.
 
 - [x] **Widget de ajuda da suite** (05/10, slug `assist-widget`): `components/assist-widget.tsx` copiado byte a byte do Hub e montado no `app/layout.tsx` dentro do `AuthProvider` (`<AssistWidget app="campanhas" />`). Some em telas de auth e sem user. Backend `POST /api/v1/assist/chat` e job do `tracker`.
+- [x] **Fase 4.36 — sidebar recolhivel + Inicio Campanha** (17/11, slug `inicio-campanha`): (1) `components/navbar.tsx` removido; `components/sidebar.tsx` (fixa a esquerda, w-60 ↔ w-16 so icones com `title`, estado em `localStorage` `campanhas.sidebar.collapsed` lido em useEffect; drawer + barra fina no mobile; usuario/Admin/logout no rodape; z-30/z-35 abaixo do assist, toasts/modais e session-expired). Regras de acesso iguais as da navbar: Papeis so `isAdmin`. (2) `/inicio-campanha` composer + (3) `/inicio-campanha/envios` acompanhamento — ver Telas no README e endpoints acima. Tabelas `campanha_oferta_templates`/`campanha_oferta_envios` (migration 084 do tracker). Observacao livre entra entre o IMPORTANT TO NOTE e os criativos. Escrita gateada por `can("campanhas.edit") || owner`.
 - [ ] **Fase 5 — integracao com NF**: NF passa a usar dropdown de campanhas em vez de texto livre; FK `nf_invoices.campanha_id` + backfill
 
 ## Decisoes tomadas
 
 1. **App separado** em vez de modulo dentro do Tracker ou do NF — campanhas e dominio compartilhado, faz sentido como entidade primaria.
 
-2. **Helpers reaproveitados do NF/Tracker** (api.ts, auth-context.tsx, toast-context.tsx, config.ts, app-shell, status-badge, navbar) — copiados manualmente. Quando o quarto app aparecer, extrair pra `@caracol/ui`.
+2. **Helpers reaproveitados do NF/Tracker** (api.ts, auth-context.tsx, toast-context.tsx, config.ts, app-shell, status-badge; a navbar virou sidebar propria em 17/11) — copiados manualmente. Quando o quarto app aparecer, extrair pra `@caracol/ui`.
 
 3. **Mesma instancia Supabase do Tracker/NF** — tabela `campanhas` no schema publico, **sem prefixo**. Permite SSO trivial e reuso de auth.
 
