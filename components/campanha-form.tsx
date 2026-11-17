@@ -19,6 +19,7 @@ import { useToast } from "@/lib/toast-context";
 import { DeactivateMediaSourceModal } from "@/components/deactivate-media-source-modal";
 import { DateOnlyModal } from "@/components/date-only-modal";
 import { todayIso } from "@/components/reason-date-modal";
+import { OfertaTemplateSection, useOfertaTemplate } from "@/components/oferta-template-section";
 import {
   blurFormatNumberPtBr,
   formatNumberPtBr,
@@ -452,6 +453,9 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
   // Criativo e observacoes
   const [criativo, setCriativo] = useState(initial?.criativo ?? "");
   const [obs, setObs] = useState(initial?.obs ?? "");
+
+  // Template do e-mail de oferta (Inicio Campanha) — PUT separado apos o save.
+  const ofertaTpl = useOfertaTemplate(campanhaId);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -1193,6 +1197,15 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
         throw err;
       }
       setPidRemocao(null);
+
+      // Template do e-mail de oferta: chamada separada, DEPOIS da campanha
+      // salva. Try/catch proprio (saveTo nunca joga) — falha aqui nao pode cair
+      // no catch externo (no create, re-submit duplicaria a campanha).
+      const tplTargetId = saved?.id || campanhaId;
+      if (tplTargetId) {
+        const r = await ofertaTpl.saveTo(tplTargetId, !isEdit);
+        if (!r.ok && r.warn) toast.info(r.warn);
+      }
 
       toast.success(isEdit ? "Campanha atualizada." : "Campanha criada.");
       if (onSaved) {
@@ -1979,6 +1992,8 @@ export function CampanhaForm({ initial, campanhaId, onSaved }: CampanhaFormProps
           />
         </Field>
       </Section>
+
+      <OfertaTemplateSection state={ofertaTpl} campanhaId={campanhaId} />
 
       <div className="flex items-center justify-end gap-2 pt-2">
         <Link

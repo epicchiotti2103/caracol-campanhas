@@ -10,6 +10,7 @@
 // que foi efetivamente copiado/aberto).
 
 import { apiFetch } from "@/lib/api";
+import { apiFetchStatus } from "@/lib/api-status";
 
 // ---- Tipos (espelham o contrato) ----
 
@@ -28,6 +29,7 @@ export const TEMPLATE_KEYS = [
   "os",
   "ideal_fraud_rate",
   "payable_events",
+  "po",
   "important_note",
   "creative_links"
 ] as const;
@@ -42,6 +44,8 @@ export interface OfertaTemplateResponse {
   template: OfertaTemplate | null;
   origem: TemplateOrigem;
   sugestao: OfertaTemplate;
+  /** af_prt fixo da campanha (= campanhas.af_prt). Backend antigo nao manda. */
+  af_prt?: string | null;
 }
 
 export interface InicioPrefill {
@@ -156,6 +160,7 @@ export const TEMPLATE_FIELD_LABEL: Record<TemplateKey, string> = {
   os: "OS",
   ideal_fraud_rate: "Ideal Fraud Rate",
   payable_events: "Payable Event",
+  po: "PO padrao",
   important_note: "Important to note",
   creative_links: "Criativos (1 por linha: label -> url)"
 };
@@ -166,7 +171,7 @@ export function emptyTemplate(): OfertaTemplate {
   return t;
 }
 
-/** So as 11 chaves do contrato; string vazia vira null. */
+/** So as chaves do contrato (11 + po); string vazia vira null. */
 export function normalizeTemplate(t: Partial<OfertaTemplate> | null | undefined): OfertaTemplate {
   const out = emptyTemplate();
   if (!t) return out;
@@ -245,10 +250,25 @@ export function putOfertaTemplate(
   campanhaId: string,
   tpl: Partial<OfertaTemplate>
 ): Promise<OfertaTemplate> {
-  return apiFetch(`/campanhas/${campanhaId}/oferta-template`, {
+  // apiFetchStatus preserva o status (503 = migration pendente) pro chamador.
+  return apiFetchStatus(`/campanhas/${campanhaId}/oferta-template`, {
     method: "PUT",
     body: JSON.stringify(normalizeTemplate(tpl))
   });
+}
+
+/** Ha algum campo preenchido no template? (create sem nada = nao grava linha vazia) */
+export function templateHasContent(t: Partial<OfertaTemplate> | null | undefined): boolean {
+  if (!t) return false;
+  return TEMPLATE_KEYS.some((k) => typeof t[k] === "string" && (t[k] as string).trim() !== "");
+}
+
+/**
+ * Template efetivo pra montar o e-mail: o proprio/herdado, ou a sugestao
+ * derivada da campanha quando nao ha nenhum salvo.
+ */
+export function effectiveTemplate(r: OfertaTemplateResponse | null | undefined): OfertaTemplate {
+  return normalizeTemplate(r?.template ?? r?.sugestao ?? null);
 }
 
 export function getInicioPrefill(campanhaId: string, publisherId: string): Promise<InicioPrefill> {

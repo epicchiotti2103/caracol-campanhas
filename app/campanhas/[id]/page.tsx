@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -92,6 +92,35 @@ function CampanhaDetail() {
     useState<MediaSourcesStatusWindowsResponse | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Deep link `?editar=1[&secao=oferta-template]` (vem do Inicio Campanha:
+  // "Editar no cadastro da oferta"). Abre o form 1x quando a campanha recem
+  // carregada (fresca do load inicial) e a permissao estiverem prontas, e rola
+  // ate a secao pedida depois que o form montar.
+  const deepLinkDone = useRef(false);
+  const canEdit = can("campanhas.edit");
+  useEffect(() => {
+    if (deepLinkDone.current || !campanha || !canEdit) return;
+    let params: URLSearchParams;
+    try {
+      params = new URLSearchParams(window.location.search);
+    } catch {
+      return;
+    }
+    if (params.get("editar") !== "1") return;
+    deepLinkDone.current = true;
+    setEditing(true);
+    const secao = params.get("secao");
+    if (secao) {
+      let tries = 0;
+      const tick = () => {
+        const el = document.getElementById(secao);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        else if (tries++ < 20) setTimeout(tick, 100);
+      };
+      setTimeout(tick, 50);
+    }
+  }, [campanha, canEdit]);
 
   useEffect(() => {
     if (!id) return;
