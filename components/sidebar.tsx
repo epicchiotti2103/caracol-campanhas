@@ -77,18 +77,26 @@ function isActive(pathname: string, l: LinkDef): boolean {
   return pathname === l.href || pathname.startsWith(l.href + "/");
 }
 
+// Cache de modulo: AppShell e montado por pagina (remonta a cada rota). Sem
+// isso a sidebar recolhida "piscaria" aberta->fechada em toda navegacao. No
+// 1o load fica false (igual ao SSR, sem hydration mismatch).
+let cachedCollapsed: boolean | null = null;
+
 export function useSidebarCollapsed() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => cachedCollapsed ?? false);
   useEffect(() => {
+    if (cachedCollapsed !== null) return;
     try {
-      setCollapsed(window.localStorage.getItem(STORAGE_KEY) === "1");
+      cachedCollapsed = window.localStorage.getItem(STORAGE_KEY) === "1";
     } catch {
-      // storage bloqueado: fica expandida
+      cachedCollapsed = false; // storage bloqueado: fica expandida
     }
+    setCollapsed(cachedCollapsed);
   }, []);
   const toggle = () =>
     setCollapsed((c) => {
       const next = !c;
+      cachedCollapsed = next;
       try {
         window.localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
       } catch {

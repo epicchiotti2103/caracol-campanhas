@@ -295,7 +295,6 @@ function Composer() {
         const prts = p?.af_prts || [];
         setAfPrt(prts.length >= 1 ? prts[0] : localAfPrts[0] || "");
         setDestinatarios(p?.destinatarios || []);
-        if (modo === "reinicio" && p?.budget_anterior) setBudgetText(String(p.budget_anterior));
       } catch (err) {
         if (cancelled) return;
         setPrefillErr(
@@ -311,13 +310,14 @@ function Composer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campanhaId, publisher]);
 
-  // Ao trocar pra reinicio, puxa o budget do mes anterior se o campo estiver vazio
+  // Reinicio: puxa o budget do mes anterior se o campo estiver vazio (ao
+  // trocar de modo OU quando o prefill chega depois do clique em Reinicio).
   useEffect(() => {
     if (modo === "reinicio" && !budgetText.trim() && prefill?.budget_anterior) {
       setBudgetText(String(prefill.budget_anterior));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modo]);
+  }, [modo, prefill]);
 
   const afPrtOptions = useMemo(() => {
     const fromPrefill = prefill?.af_prts || [];

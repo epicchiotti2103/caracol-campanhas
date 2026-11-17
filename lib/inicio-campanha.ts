@@ -182,7 +182,14 @@ export function normalizeTemplate(t: Partial<OfertaTemplate> | null | undefined)
 /** Mensagem amigavel (o 422 do FastAPI vem com detail array -> "[object Object]"). */
 export function friendlyError(err: unknown, fallback: string): string {
   const msg = (err as any)?.message;
-  if (!msg || typeof msg !== "string" || msg.includes("[object Object]") || msg === "Request failed") {
+  if (
+    !msg ||
+    typeof msg !== "string" ||
+    msg.includes("[object Object]") ||
+    msg === "Request failed" ||
+    // rota ainda nao existe no backend (deploy em paralelo)
+    /not found|method not allowed|failed to fetch/i.test(msg)
+  ) {
     return fallback;
   }
   return msg;
