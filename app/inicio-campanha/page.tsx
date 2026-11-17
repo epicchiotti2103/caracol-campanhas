@@ -325,7 +325,8 @@ function Composer() {
 
   // Prefill de cada publisher recem-selecionado (1x por publisher/campanha).
   useEffect(() => {
-    if (!campanhaId || !campanha) return;
+    // campanha/selected ainda da campanha anterior no commit da troca
+    if (!campanhaId || !campanha || campanha.id !== campanhaId) return;
     const gen = genRef.current;
     for (const key of selected) {
       if (requested.current.has(key)) continue;
